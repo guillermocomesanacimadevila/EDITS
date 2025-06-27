@@ -1,0 +1,104 @@
+:root {
+    --color-bg: #ffffff;
+    --color-text: #1f1f1f;
+    --color-accent: #4e9cff;
+    --color-header: #f8f9fa;
+    --color-subtle: #f0f0f0;
+    --color-code-bg: #f4f4f4;
+  
+    --font-main: 'Segoe UI', sans-serif;
+    --transition: 0.3s ease;
+  }
+  
+  .dark-mode {
+    --color-bg: #1f1f1f;
+    --color-text: #e0e0e0;
+    --color-accent: #4e9cff;
+    --color-header: #2a2a2a;
+    --color-subtle: #333;
+    --color-code-bg: #2e2e2e;
+  }
+  
+  body {
+    font-family: var(--font-main);
+    background-color: var(--color-bg);
+    color: var(--color-text);
+    margin: 0;
+    padding: 0;
+    line-height: 1.6;
+    transition: background-color var(--transition), color var(--transition);
+  }
+  
+  header {
+    background-color: var(--color-accent);
+    color: white;
+    padding: 1rem 2rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 1.5rem;
+  }
+  
+  main {
+    max-width: 960px;
+    margin: 2rem auto;
+    padding: 0 2rem;
+  }
+  
+  h1, h2, h3 {
+    color: var(--color-accent);
+    margin-bottom: 0.5rem;
+  }
+  
+  section {
+    margin-bottom: 3rem;
+  }
+  
+  pre, code {
+    background-color: var(--color-code-bg);
+    padding: 1rem;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-family: monospace;
+    font-size: 0.9rem;
+  }
+  
+  img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 8px;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15);
+    margin: 1rem 0;
+  }
+  
+  .grid {
+    display: grid;
+    gap: 1.5rem;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  }
+  
+  .toggle-btn {
+    background-color: white;
+    color: var(--color-accent);
+    border: none;
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 1rem;
+    transition: background-color var(--transition), color var(--transition);
+  }
+  
+  .toggle-btn:hover {
+    background-color: var(--color-subtle);
+  }
+  
+  footer {
+    text-align: center;
+    padding: 2rem;
+    font-size: 0.85rem;
+    opacity: 0.6;
+    background-color: var(--color-subtle);
+    transition: background-color var(--transition);
+  }
+  
