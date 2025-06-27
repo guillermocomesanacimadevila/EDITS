@@ -1,4 +1,9 @@
-# Synergy project Live Cell Microscopy
+# 📸 Synergy Project – Live Cell Microscopy
+
+Temporal feature learning for event classification in live-cell imaging.
+
+Authors:
+Cangxiong Chen, Guillermo Comesaña Cimadevila, Vinay P. Namboodiri, Julia E. Sero
 
 ### Run
 
