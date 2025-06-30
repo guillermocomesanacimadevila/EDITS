@@ -565,6 +565,7 @@ def flatten_data(input_data, crops_per_image):
             flat_data.append((input_data[i][0][j]))
     return flat_data
 
+# ---- This is the only new code block you needed to add! ----
 def get_argparser():
     parser = configargparse.ArgumentParser()
     parser.add_argument("--input_frame", type=str, required=True)
@@ -580,6 +581,7 @@ def get_argparser():
     parser.add_argument("--data_seed", type=int, default=42)
     parser.add_argument("--n_images", type=int, default=None)
     return parser
+# ---- end of get_argparser ----
 
 def main():
     parser = get_argparser()
