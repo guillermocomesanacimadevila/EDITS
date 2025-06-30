@@ -16,12 +16,13 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Upgrade pip and install Python dependencies
+# Upgrade pip and install Python dependencies, including dill
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir \
         numpy pandas matplotlib seaborn scikit-image imageio tqdm pyyaml \
         gitpython configargparse tifffile opencv-python typing-extensions \
-        torch torchvision torchaudio
+        torch torchvision torchaudio \
+        dill
 
 # Install Nextflow
 RUN curl -s https://get.nextflow.io | bash && \
