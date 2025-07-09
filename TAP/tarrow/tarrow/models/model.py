@@ -26,6 +26,7 @@ from ..visualizations import create_visuals
 from ..visualizations import cam_insets
 
 from pdb import set_trace
+import shutil  # <<< added for overwrite
 
 logger = logging.getLogger(__name__)
 
@@ -154,13 +155,15 @@ class TimeArrowNet(nn.Module):
 
     @outdir.setter
     def outdir(self, path):
+        # >>> MODIFIED FOR AUTO-OVERWRITE <<<
         if path is None:
             self._outdir = None
             return
 
         path = Path(path)
         if path.exists():
-            raise RuntimeError(f"Model folder already exists {path}.")
+            print(f"[INFO] Output folder '{path}' exists. Deleting for fresh run.")
+            shutil.rmtree(path)
         self._outdir = path
         for sub in (".", "tb", "visuals"):
             (self._outdir / sub).mkdir(exist_ok=False, parents=True)
@@ -396,7 +399,7 @@ class TimeArrowNet(nn.Module):
             _commit = _git_commit()
             if "commit" in kwargs and kwargs["commit"] != _commit:
                 raise RuntimeError(
-                    f"Git commit of saved model ({kwargs['commit']}) does not match current commit of tarrow repo ({repo.commit()}). Set `ignore_commit` parameter to `True` to proceed."
+                    f"Git commit of saved model ({kwargs['commit']}) does not match current commit of tarrow repo ({_commit}). Set `ignore_commit` parameter to `True` to proceed."
                 )
 
         if "commit" in kwargs:
