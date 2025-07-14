@@ -142,6 +142,9 @@ tensorboard: true
 write_final_cams: false
 binarize: false
 config_yaml: "$CONFIG_FILE"
+# For workflow scripts needing explicit frame/mask/dir
+input_frame: "$INPUT_VAL"
+data_save_dir: "$OUTDIR"
 EOL
 
     center_text "${GREEN}📝 Configuration saved to $CONFIG_FILE${NC}"
@@ -269,19 +272,27 @@ tensorboard: false
 write_final_cams: true
 binarize: false
 config_yaml: "$CONFIG_FILE"
+input_frame: "$VAL_MOVIE"
+data_save_dir: "$CURR_OUTDIR"
 EOL
 
         center_text "${BLUE}🚀 TAP-only eval for $BASENAME${NC}"
         LOGFILE="$CURR_OUTDIR/pipeline_log.txt"
-        exec > >(tee -i "$LOGFILE")
-        exec 2>&1
+        (
+          exec > >(tee -i "$LOGFILE")
+          exec 2>&1
 
-        START_TIME=$(date +%s)
-        python Workflow/02_data_prep.py --config "$CONFIG_FILE" || { echo -e "${RED}❌ TAP-only data prep failed for $BASENAME!${NC}"; RUN_SUMMARY+="\n🔸 $BASENAME: FAILED!"; continue; }
-        END_TIME=$(date +%s)
-        RUNTIME=$((END_TIME - START_TIME))
-
-        RUN_SUMMARY+="\n🔸 $BASENAME: SUCCESS. Output Dir: $CURR_OUTDIR (Runtime: $((RUNTIME / 60)) min $((RUNTIME % 60)) sec)"
+          START_TIME=$(date +%s)
+          python Workflow/02_data_prep.py --config "$CONFIG_FILE" || { echo -e "${RED}❌ TAP-only data prep failed for $BASENAME!${NC}"; exit 99; }
+          END_TIME=$(date +%s)
+          RUNTIME=$((END_TIME - START_TIME))
+          echo "[$BASENAME] Completed in $((RUNTIME/60))m $((RUNTIME%60))s"
+        )
+        if [[ $? -eq 99 ]]; then
+          RUN_SUMMARY+="\n🔸 $BASENAME: FAILED!"
+        else
+          RUN_SUMMARY+="\n🔸 $BASENAME: SUCCESS. Output Dir: $CURR_OUTDIR"
+        fi
     done
 
     # ──────────────────────────────────────────────────────────────── #
