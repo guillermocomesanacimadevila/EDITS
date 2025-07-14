@@ -26,15 +26,13 @@ from ..visualizations import create_visuals
 from ..visualizations import cam_insets
 
 from pdb import set_trace
-import shutil  # <<< added for overwrite
+import shutil  # <<< used for destructive delete
 
 logger = logging.getLogger(__name__)
-
 
 class NoOutputFolderException(Exception):
     def __init__(self) -> None:
         super().__init__("Model doesnt have an associated output folder!")
-
 
 def _tensor_random_choice(
     x: torch.Tensor, n_samples: Union[int, float]
@@ -52,7 +50,6 @@ def _tensor_random_choice(
     idx = np.random.randint(0, len(x), n_samples)
     return x[idx]
 
-
 def _git_commit():
     """returns the git commit hash of the current repository if it exists, otherwise None (for debugging purposes)"""
     import git
@@ -61,7 +58,6 @@ def _git_commit():
         return str(git.Repo(Path(__file__).resolve().parents[2]).commit())
     except git.exc.InvalidGitRepositoryError:
         return None
-
 
 class TimeArrowNet(nn.Module):
     def __init__(
@@ -153,20 +149,27 @@ class TimeArrowNet(nn.Module):
     def outdir(self):
         return self._outdir
 
+    # ------- PATCHED TO AUTO-CLEAN FOLDER INSTEAD OF CRASHING! -------
     @outdir.setter
     def outdir(self, path):
-        # >>> MODIFIED FOR AUTO-OVERWRITE <<<
+        import shutil
         if path is None:
             self._outdir = None
             return
 
         path = Path(path)
         if path.exists():
-            print(f"[INFO] Output folder '{path}' exists. Deleting for fresh run.")
-            shutil.rmtree(path)
+            # If folder is not empty, REMOVE IT!
+            if any(path.iterdir()):
+                print(f"⚠️ [TimeArrowNet] Removing existing model folder {path}")
+                shutil.rmtree(path)
+        # (Re-)make the folder, just to be sure
+        path.mkdir(parents=True, exist_ok=True)
+
         self._outdir = path
         for sub in (".", "tb", "visuals"):
-            (self._outdir / sub).mkdir(exist_ok=False, parents=True)
+            (self._outdir / sub).mkdir(exist_ok=True, parents=True)
+    # -----------------------------------------------------------------
 
     def get_activation(self, model, input, output):
         self.proj_activations = output.detach()
@@ -186,7 +189,6 @@ class TimeArrowNet(nn.Module):
         Returns:
             final: Tensor of size B, n_classes
             (projections: Tensor of size B, T, n_features, H, W)
-
         """
 
         # Flatten timepoints into the batch dimension
