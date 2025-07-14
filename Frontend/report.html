@@ -4,193 +4,340 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>CELLFLOW Pipeline Report</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --font-sans: 'Inter', 'Segoe UI', sans-serif;
-      --bg-light: #f8f9fc;
-      --bg-dark: #121212;
-      --text-light: #1e1e1e;
-      --text-dark: #f5f5f5;
-      --accent: #00b4d8;
-      --card-bg-light: #ffffff;
-      --card-bg-dark: #1f1f1f;
-      --border-radius: 12px;
-      --shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+      --font-sans: 'Inter', 'Segoe UI', Arial, sans-serif;
+      --accent: #38e1ff;
+      --accent2: #38ffba;
+      --accent-dark: #219ecb;
+      --bg: #f7fafd;
+      --bg-dark: #181d23;
+      --card-bg: rgba(255,255,255,0.96);
+      --card-bg-dark: rgba(28,32,40,0.96);
+      --header-bg: linear-gradient(90deg, #48d5ff 0%, #3e73ff 100%);
+      --header-bg-dark: linear-gradient(90deg, #202b3a 0%, #1a3446 100%);
+      --border-radius: 22px;
+      --shadow: 0 8px 32px 0 rgba(40, 61, 110, 0.11), 0 1.5px 6px rgba(44,61,94,0.08);
+      --transition: all 0.25s cubic-bezier(.77,0,.18,1);
+      --text: #222936;
+      --text-dark: #e7edf5;
+      --divider: #eaf2f7;
+      --divider-dark: #223041;
+      --metric-bg: #eafdff;
+      --metric-bg-dark: #223041;
+      --table-head: #f2fbfd;
+      --table-head-dark: #233143;
+      --table-border: #d5f1fb;
+      --table-border-dark: #2c3c4e;
+      --footer-bg: #f7fcfe;
+      --footer-bg-dark: #1d2736;
     }
-
+    html { scroll-behavior: smooth; }
     body {
-      font-family: var(--font-sans);
-      background-color: var(--bg-light);
-      color: var(--text-light);
-      margin: 0;
-      transition: background 0.3s ease, color 0.3s ease;
+      font-family: var(--font-sans); margin: 0;
+      background: var(--bg); color: var(--text);
+      transition: var(--transition); min-height: 100vh; letter-spacing: 0.01em;
     }
-
-    .dark-mode {
-      background-color: var(--bg-dark);
-      color: var(--text-dark);
-    }
-
+    .dark-mode { background: var(--bg-dark); color: var(--text-dark); }
     header {
-      background: var(--accent);
-      color: white;
-      padding: 1.2rem 2rem;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      box-shadow: var(--shadow);
+      position: sticky; top: 0; z-index: 20;
+      background: var(--header-bg); color: #fff;
+      padding: 1.5rem 2rem 1.2rem 2rem;
+      display: flex; justify-content: space-between; align-items: center;
+      border-bottom-left-radius: var(--border-radius); border-bottom-right-radius: var(--border-radius);
+      box-shadow: var(--shadow); transition: var(--transition);
     }
-
-    header h1 {
-      margin: 0;
-      font-size: 1.8rem;
-      font-weight: 700;
-      letter-spacing: 1px;
-    }
-
+    .dark-mode header { background: var(--header-bg-dark); }
+    header h1 { margin: 0; font-size: 2.15rem; font-weight: 800; letter-spacing: 1.5px; display: flex; align-items: center; gap: 0.6em; filter: drop-shadow(0 1px 5px rgba(30,200,250,0.08)); }
     .toggle-btn {
-      background: white;
-      color: var(--accent);
-      border: none;
-      padding: 0.5rem 1rem;
-      border-radius: var(--border-radius);
-      font-weight: bold;
-      cursor: pointer;
-      transition: background 0.3s;
+      background: linear-gradient(90deg,#fff 0%, #eafaff 100%);
+      color: #299acf; border: none; padding: 0.48rem 1.15rem;
+      border-radius: 1.7em; font-weight: 700; font-size: 1.07rem; cursor: pointer;
+      box-shadow: 0 2px 10px rgba(0,160,240,0.07);
+      transition: background 0.22s, color 0.22s, box-shadow 0.22s;
+      outline: none; border: 1.2px solid #e6faff;
     }
-
-    .toggle-btn:hover {
-      background: #eeeeee;
+    .toggle-btn:hover { background: var(--accent-dark); color: #fff; box-shadow: 0 3px 18px rgba(54,180,250,0.18); }
+    .dark-mode .toggle-btn {
+      background: linear-gradient(90deg,#1f2c36 0%, #233243 100%);
+      color: #93e7ff; border: 1.2px solid #223b51;
     }
-
-    main {
-      max-width: 960px;
-      margin: 2rem auto;
-      padding: 0 1.5rem;
-    }
-
+    main { max-width: 1120px; margin: 2.7rem auto 0 auto; padding: 0 1.7rem 2rem 1.7rem; }
     section {
-      background: var(--card-bg-light);
-      padding: 1.8rem;
-      border-radius: var(--border-radius);
-      margin-bottom: 2rem;
-      box-shadow: var(--shadow);
-      transition: background-color 0.3s ease;
+      background: var(--card-bg); border-radius: var(--border-radius); box-shadow: var(--shadow);
+      margin-bottom: 2.5rem; padding: 2.25rem 2.15rem 1.6rem 2.15rem;
+      transition: var(--transition); position: relative; overflow: hidden;
+      animation: fadeInUp 0.7s cubic-bezier(.33,1.15,.68,1) both;
     }
-
-    .dark-mode section {
-      background: var(--card-bg-dark);
+    @keyframes fadeInUp {
+      from { opacity:0; transform: translateY(20px);}
+      to {opacity:1; transform: translateY(0);}
     }
-
+    .dark-mode section { background: var(--card-bg-dark); }
     h2 {
-      border-left: 5px solid var(--accent);
-      padding-left: 0.8rem;
-      font-size: 1.5rem;
-      margin-top: 0;
-      margin-bottom: 1rem;
+      margin-top: 0; font-size: 1.62rem; font-weight: 700;
+      display: flex; align-items: center; gap: 0.6em; margin-bottom: 1.1rem;
+      line-height: 1.22;
     }
-
+    .icon { font-size: 1.35em; margin-right: 0.11em; vertical-align: -0.12em; }
+    .gradient-title {
+      background: linear-gradient(90deg, #22b7d5 0, #33e4be 70%);
+      background-clip: text;
+      -webkit-background-clip: text;
+      color: transparent;
+      -webkit-text-fill-color: transparent;
+      display: inline;
+      font-size: inherit;
+      font-weight: inherit;
+      letter-spacing: inherit;
+    }
     pre, code {
-      background-color: #f4f4f4;
-      padding: 1rem;
-      border-radius: var(--border-radius);
-      font-family: monospace;
-      overflow-x: auto;
+      font-family: "JetBrains Mono", "Fira Mono", "Menlo", monospace;
+      background: var(--metric-bg); color: #0090ff; padding: 1em 1em; font-size: 1.06em;
+      border-radius: 0.8em; box-shadow: 0 2px 8px rgba(42,126,230,0.03); margin: 0.1em 0 0.9em 0;
+      overflow-x: auto; transition: var(--transition); line-height: 1.62; border: 1.2px solid var(--divider);
     }
-
-    .dark-mode pre,
-    .dark-mode code {
-      background-color: #2c2c2c;
+    .dark-mode pre, .dark-mode code { background: var(--metric-bg-dark); color: #31e5ff; border: 1.2px solid var(--divider-dark);}
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.22em; margin-bottom: 1em; }
+    .kpi-card {
+      background: linear-gradient(125deg, #eafafd 0%, #f7fcff 100%);
+      border-radius: 1.5em; box-shadow: 0 4px 22px rgba(10,190,240,0.07); padding: 1.09em 1.45em;
+      text-align: center; font-size: 1.13em; color: #0e395a; font-weight: 600; transition: var(--transition); letter-spacing: 0.01em; border: 1.2px solid #d8f6ff;
+      display: flex; flex-direction: column; gap: 0.22em; align-items: center; justify-content: center;
     }
-
+    .dark-mode .kpi-card {
+      background: linear-gradient(125deg, #222c38 0%, #262e3a 100%);
+      color: #93eafd; border: 1.2px solid #233b4d;
+    }
+    .kpi-label { font-size: 0.98em; color: #5e7893; margin-bottom: 0.18em; font-weight: 500; }
+    .dark-mode .kpi-label { color: #8fd1e3; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(305px, 1fr)); gap: 1.55rem; margin-bottom: 1.18em; }
     img {
-      width: 100%;
-      border-radius: var(--border-radius);
-      box-shadow: var(--shadow);
+      width: 100%; border-radius: 1.2em; box-shadow: 0 3px 18px 0 rgba(53,138,215,0.08); border: 2.5px solid #e0f6ff; transition: transform 0.15s cubic-bezier(.75,0,.18,1), box-shadow 0.15s; cursor: pointer; background: #f6fafd;
     }
-
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: 1.5rem;
+    img:hover { transform: scale(1.045) translateY(-2px); box-shadow: 0 8px 38px 0 rgba(36,196,245,0.12); border-color: #38e1ff; z-index: 2; }
+    .dark-mode img { background: #212837; border-color: #253b51; }
+    .divider { height: 1.4px; background: linear-gradient(90deg,#c6f6ff 0,#e5eefc 80%); border-radius: 2em; margin: 2.2em 0 2em 0; border: none; }
+    .dark-mode .divider { background: linear-gradient(90deg,#2c3a47 0,#2b414e 80%); }
+    .download-group {margin-top: 0.45em;}
+    .download-btn {margin-right: 0.72em;}
+    .no-data { color: #bbb; text-align: center; font-size: 1.09em; padding: 1.18em 0; }
+    .batch-zip { margin: 0.8em 0 2em 0; text-align: right; }
+    .summary-box {
+      border-radius: 18px; box-shadow: 0 4px 18px #d6f3fc7a;
+      background: linear-gradient(109deg,#d7f6ff 0,#f3fcff 100%);
+      padding: 1.38em 2.18em; margin-bottom: 1.7em; font-size: 1.13em; font-weight: 500; color: #18849b;
+      border: 1.5px solid #caf4ff;
     }
-
+    .dark-mode .summary-box {
+      background: linear-gradient(109deg,#223947 0,#1a3043 100%);
+      color: #a3dfff; border: 1.5px solid #1d3a4a;
+    }
+    table {
+      width: 100%; border-collapse: separate; border-spacing: 0; margin-bottom: 1em;
+      font-size: 1.04em; border-radius: 14px; overflow: hidden; background: #fff;
+      box-shadow: 0 2px 12px #e3f6ff65;
+    }
+    th, td { padding: 0.85em 0.95em; text-align: center; }
+    thead tr {
+      background: var(--table-head);
+      font-weight: 700; font-size: 1em;
+      border-bottom: 2.2px solid var(--table-border);
+    }
+    tbody tr:nth-child(even) { background: #f5fafc; }
+    tbody tr:hover { background: #e7f7fb; }
+    td, th { border-bottom: 1.1px solid var(--table-border);}
+    table:last-child {margin-bottom:0.5em;}
+    .dark-mode table { background: #232e3d; box-shadow: 0 2px 10px #1e2e3a80;}
+    .dark-mode th, .dark-mode thead tr { background: var(--table-head-dark); color: #7fd2ea; border-bottom: 2px solid var(--table-border-dark);}
+    .dark-mode td, .dark-mode tbody tr { border-bottom: 1.1px solid var(--table-border-dark);}
+    .dark-mode tbody tr:nth-child(even) { background: #223146;}
+    .dark-mode tbody tr:hover { background: #23303f;}
     footer {
-      text-align: center;
-      font-size: 0.85rem;
-      color: #888;
-      padding: 2rem;
+      background: var(--footer-bg); color: #55b3e2; text-align: center;
+      padding: 1.1rem 0 1.2rem 0; font-size: 1.1rem; letter-spacing: 0.01em;
+      border-top-left-radius: 14px; border-top-right-radius: 14px;
+      margin-top: 1.5rem; box-shadow: 0 0 10px #c3ecfa27;
+      font-weight: 600;
     }
-
     .dark-mode footer {
-      color: #aaa;
+      background: var(--footer-bg-dark); color: #38e1ff; box-shadow: 0 0 10px #10304545;
+    }
+    @media (max-width: 700px) {
+      header {padding: 1rem;}
+      section {padding: 1rem;}
+      .summary-box {padding: 1em;}
+      .kpi-card {font-size: 1em;}
+      h2 {font-size: 1.12rem;}
+      main {padding: 0 0.2rem;}
+      table {font-size:0.99em;}
     }
   </style>
 </head>
 <body>
-
   <header>
-    <h1>🔬 CELLFLOW REPORT</h1>
-    <button class="toggle-btn" id="theme-toggle">🌗 Toggle Theme</button>
+    <h1>🔬 <span style="letter-spacing:0.06em">CELLFLOW REPORT</span></h1>
+    <button class="toggle-btn" id="theme-toggle">🌙 Toggle Theme</button>
   </header>
-
   <main>
+    <div class="summary-box">
+      <span style="font-size:1.21em; font-weight:700;">Summary:</span>
+      {summary_text}
+    </div>
+    <div class="batch-zip">
+      <a href="{all_outputs_zip}" download class="toggle-btn">⬇️ Download All Outputs (.zip)</a>
+    </div>
     <section>
-      <h2>📋 Run Configuration</h2>
-      <pre><code>
-Model ID      : CELLFLOW_2025
-Crop Size     : 48
-Epochs        : 12
-Pixel Res     : 0.65 µm/pixel
-Backbone      : UNet
-Mask File     : ./data/toy_mask.tif
-Config File   : ./config/run_config.yaml
-      </code></pre>
-    </section>
-
-    <section>
-      <h2>📈 Training Metrics</h2>
-      <div class="grid">
-        <img src="vis/epoch_curve.png" alt="Epoch Curve" />
-        <img src="vis/loss_curve.png" alt="Loss Curve" />
-        <img src="vis/accuracy_curve.png" alt="Accuracy Curve" />
+      <h2><span class="icon">📋</span><span class="gradient-title">Run Configuration</span></h2>
+      <div class="kpi-grid">
+        <div class="kpi-card"><div class="kpi-label">Model ID</div>{model_id}</div>
+        <div class="kpi-card"><div class="kpi-label">Crop Size</div>{crop_size}</div>
+        <div class="kpi-card"><div class="kpi-label">Epochs</div>{epochs}</div>
+        <div class="kpi-card"><div class="kpi-label">Pixel Res</div>{pixel_res}</div>
+        <div class="kpi-card"><div class="kpi-label">Backbone</div>{backbone}</div>
+        <div class="kpi-card"><div class="kpi-label">Mask File</div><span style="font-size:0.98em">{mask_file}</span></div>
+        <div class="kpi-card"><div class="kpi-label">Config File</div><span style="font-size:0.98em">{config_file}</span></div>
       </div>
     </section>
-
     <section>
-      <h2>🖼️ Sample Predictions</h2>
+      <h2><span class="icon">📈</span><span class="gradient-title">Training Metrics</span></h2>
       <div class="grid">
-        <img src="vis/sample_prediction_1.png" alt="Sample Prediction 1" />
-        <img src="vis/sample_prediction_2.png" alt="Sample Prediction 2" />
+        <figure>
+          <img src="{epoch_curve}" alt="Epoch Curve" title="Epoch Training Curve" />
+          <figcaption style="margin-top:0.7em;">
+            Epoch Curve
+            <a href="{epoch_curve}" download class="toggle-btn download-btn">⬇️ PNG</a>
+            <a href="{epoch_curve_pdf}" download class="toggle-btn">⬇️ PDF</a>
+          </figcaption>
+        </figure>
+        <figure>
+          <img src="{loss_curve}" alt="Loss Curve" title="Loss Over Time" />
+          <figcaption style="margin-top:0.7em;">
+            Loss Curve
+            <a href="{loss_curve}" download class="toggle-btn download-btn">⬇️ PNG</a>
+            <a href="{loss_curve_pdf}" download class="toggle-btn">⬇️ PDF</a>
+          </figcaption>
+        </figure>
+        <figure>
+          <img src="{accuracy_curve}" alt="Accuracy Curve" title="Accuracy Over Time" />
+          <figcaption style="margin-top:0.7em;">
+            Accuracy Curve
+            <a href="{accuracy_curve}" download class="toggle-btn download-btn">⬇️ PNG</a>
+            <a href="{accuracy_curve_pdf}" download class="toggle-btn">⬇️ PDF</a>
+          </figcaption>
+        </figure>
+      </div>
+      <div class="download-group" style="text-align:right;">
+        <a href="{training_metrics_csv}" download class="toggle-btn">⬇️ Training Metrics CSV</a>
       </div>
     </section>
-
     <section>
-      <h2>📊 Confusion Matrix</h2>
-      <img src="vis/confusion_matrix.png" alt="Confusion Matrix" />
+      <h2><span class="icon">🖼️</span><span class="gradient-title">Sample Predictions</span></h2>
+      <div class="grid" id="sample-predictions">
+        {sample_predictions_html}
+      </div>
     </section>
-
-    <section>
-      <h2>🧠 Classifier Performance</h2>
-      <pre><code>
-Accuracy  : 91.3%
-Precision : 92.0%
-Recall    : 90.5%
-F1 Score  : 91.2%
-AUC       : 0.94
-      </code></pre>
+    <section id="confusion-section">
+      <h2><span class="icon">📊</span><span class="gradient-title">Confusion Matrix</span></h2>
+      <div style="max-width:400px;margin:auto;">
+        <img src="{confusion_matrix}" alt="Confusion Matrix" title="Confusion Matrix" />
+        <div class="download-group" style="text-align:center;">
+          <a href="{confusion_matrix}" download class="toggle-btn download-btn">⬇️ PNG</a>
+          <a href="{confusion_matrix_pdf}" download class="toggle-btn">⬇️ PDF</a>
+          <a href="{confusion_matrix_csv}" download class="toggle-btn">⬇️ CSV</a>
+        </div>
+      </div>
+    </section>
+    <section id="classifier-section">
+      <h2><span class="icon">🧠</span><span class="gradient-title">Classifier Performance</span></h2>
+      <div class="kpi-grid">
+        <div class="kpi-card"><div class="kpi-label">Accuracy</div>{clf_accuracy}</div>
+        <div class="kpi-card"><div class="kpi-label">Precision</div>{clf_precision}</div>
+        <div class="kpi-card"><div class="kpi-label">Recall</div>{clf_recall}</div>
+        <div class="kpi-card"><div class="kpi-label">F1 Score</div>{clf_f1}</div>
+        <div class="kpi-card"><div class="kpi-label">AUC</div>{clf_auc}</div>
+      </div>
+      <div class="download-group" style="text-align:right;">
+        <a href="{classifier_stats_csv}" download class="toggle-btn">⬇️ Classifier Stats CSV</a>
+      </div>
+    </section>
+    <section id="perclass-section">
+      <h2><span class="icon">🔢</span><span class="gradient-title">Per-Class Statistics</span></h2>
+      <table>
+        <thead>
+          <tr><th>Class</th><th>Count</th><th>Precision</th><th>Recall</th><th>F1</th></tr>
+        </thead>
+        <tbody>
+          {perclass_table_rows}
+        </tbody>
+      </table>
+      <div class="download-group" style="text-align:right;">
+        <a href="{perclass_csv}" download class="toggle-btn">⬇️ Per-Class Stats CSV</a>
+      </div>
+    </section>
+    <section id="tap-section">
+      <h2><span class="icon">🧪</span><span class="gradient-title">TAP (Batch Mode) Metrics</span></h2>
+      <table>
+        <thead>
+          <tr><th>File</th><th>TP</th><th>FP</th><th>FN</th><th>TAP Score</th></tr>
+        </thead>
+        <tbody>
+          {tap_table_rows}
+        </tbody>
+      </table>
+      <div class="download-group" style="text-align:right;">
+        <a href="{tap_csv}" download class="toggle-btn">⬇️ TAP CSV</a>
+      </div>
+      <div class="grid" id="tap-overlays">
+        {tap_overlays_html}
+      </div>
+    </section>
+    <section id="extra-section">
+      <h2><span class="icon">📁</span><span class="gradient-title">Additional Outputs</span></h2>
+      <div>
+        {extra_content}
+      </div>
     </section>
   </main>
-
   <footer>
-    Generated by <strong>CELLFLOW</strong> · © 2025
+    <strong>CELLFLOW</strong> &mdash; &copy; 2025
   </footer>
-
   <script>
+    // Theme toggle with transition and persistence
     document.getElementById('theme-toggle').addEventListener('click', function () {
       document.body.classList.toggle('dark-mode');
     });
+    (function(){
+      const themeBtn = document.getElementById('theme-toggle');
+      const isDark = localStorage.getItem('cf_dark_mode') === '1';
+      if(isDark) document.body.classList.add('dark-mode');
+      themeBtn.addEventListener('click',()=>{
+        const isNowDark = document.body.classList.contains('dark-mode');
+        localStorage.setItem('cf_dark_mode', isNowDark ? '1' : '0');
+        themeBtn.textContent = isNowDark ? '☀️ Toggle Theme' : '🌙 Toggle Theme';
+      });
+      themeBtn.textContent = document.body.classList.contains('dark-mode') ? '☀️ Toggle Theme' : '🌙 Toggle Theme';
+    })();
+    // ------- MODE-DEPENDENT DISPLAY --------
+    var pipelineMode = {pipeline_mode}; // 0 = classifier, 1 = TAP batch mode
+    function hideSection(id) { var el = document.getElementById(id); if(el) el.style.display = "none"; }
+    function showSection(id) { var el = document.getElementById(id); if(el) el.style.display = ""; }
+    window.onload = function() {
+      if (pipelineMode === 0) {
+        hideSection("tap-section");
+        hideSection("extra-section");
+      } else if (pipelineMode === 1) {
+        hideSection("classifier-section");
+        hideSection("confusion-section");
+        hideSection("perclass-section");
+      }
+      // Hide empty dynamic grids
+      if(document.getElementById('sample-predictions').children.length === 0)
+        document.getElementById('sample-predictions').innerHTML = '<div class="no-data">No sample predictions available.</div>';
+      if(document.getElementById('tap-overlays').children.length === 0)
+        document.getElementById('tap-overlays').innerHTML = '<div class="no-data">No TAP overlays available.</div>';
+    };
   </script>
-
 </body>
 </html>
