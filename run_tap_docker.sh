@@ -117,19 +117,19 @@ if [ "$VAL_BATCH" == "0" ]; then
     [[ ! "$PIXEL_RES" =~ $re_float ]] && echo -e "${RED}❌ Pixel resolution must be float.${NC}" && exit 1
     [[ "$BACKBONE" != "unet" && "$BACKBONE" != "spectformer-xs" ]] && echo -e "${RED}❌ Unsupported backbone: $BACKBONE${NC}" && exit 1
 
-    # Automatic ID: movie name + backbone + timestamp
     MODEL_ID="$(basename "$INPUT_TRAIN" .tif)_${BACKBONE}_$TIMESTAMP"
     MODEL_RUN_DIR="runs/${MODEL_ID}"
     mkdir -p "$MODEL_RUN_DIR"
     OUTDIR="${OUTDIR%/}_${MODEL_ID}"
     mkdir -p "$OUTDIR"
 
-    # Paths for Docker container mapping
-    CONTAINER_TRAIN="/data/${INPUT_TRAIN#Data/}"
-    CONTAINER_VAL="/data/${INPUT_VAL#Data/}"
-    CONTAINER_MASK="/data/${INPUT_MASK#Data/}"
-    CONTAINER_OUTDIR="/app/${OUTDIR}"
-    CONTAINER_RUNSDIR="/app/runs/${MODEL_ID}"
+    # Map all file paths for the Docker container
+    CONTAINER_TRAIN="/app/$INPUT_TRAIN"
+    CONTAINER_VAL="/app/$INPUT_VAL"
+    CONTAINER_MASK="/app/$INPUT_MASK"
+    CONTAINER_OUTDIR="/app/$OUTDIR"
+    CONTAINER_RUNSDIR="/app/$MODEL_RUN_DIR"
+    CONTAINER_CONFIG="$CONTAINER_OUTDIR/run_config.yaml"
 
     # Save config file
     CONFIG_FILE="$OUTDIR/run_config.yaml"
@@ -163,7 +163,9 @@ pixel_resolution: $PIXEL_RES
 tensorboard: true
 write_final_cams: false
 binarize: false
-config_yaml: "$CONTAINER_OUTDIR/run_config.yaml"
+config_yaml: "$CONTAINER_CONFIG"
+input_frame: "$CONTAINER_VAL"
+data_save_dir: "$CONTAINER_OUTDIR"
 EOL
 
     center_text "${GREEN}📝 Configuration saved to $CONFIG_FILE${NC}"
@@ -176,19 +178,19 @@ EOL
 
     center_text "${YELLOW}🚀 Training Model (Fine-tuning)${NC}"
     docker run --rm -v "$PWD":/app tap_pipeline:latest \
-      python Workflow/01_fine-tune.py --config "$CONTAINER_OUTDIR/run_config.yaml" || { echo -e "${RED}❌ Fine-tuning failed!${NC}"; exit 1; }
+      python Workflow/01_fine-tune.py --config "$CONTAINER_CONFIG" || { echo -e "${RED}❌ Fine-tuning failed!${NC}"; exit 1; }
 
     center_text "${YELLOW}🚀 Data Preparation${NC}"
     docker run --rm -v "$PWD":/app tap_pipeline:latest \
-      python Workflow/02_data_prep.py --config "$CONTAINER_OUTDIR/run_config.yaml" || { echo -e "${RED}❌ Data prep failed!${NC}"; exit 1; }
+      python Workflow/02_data_prep.py --config "$CONTAINER_CONFIG" || { echo -e "${RED}❌ Data prep failed!${NC}"; exit 1; }
 
     center_text "${YELLOW}🚀 Event Classification${NC}"
     docker run --rm -v "$PWD":/app tap_pipeline:latest \
-      python Workflow/03_event_classification.py --config "$CONTAINER_OUTDIR/run_config.yaml" || { echo -e "${RED}❌ Classification failed!${NC}"; exit 1; }
+      python Workflow/03_event_classification.py --config "$CONTAINER_CONFIG" || { echo -e "${RED}❌ Classification failed!${NC}"; exit 1; }
 
     center_text "${YELLOW}🚀 Examining Mistaken Predictions${NC}"
     docker run --rm -v "$PWD":/app tap_pipeline:latest \
-      python Workflow/04_examine_mistaken_predictions.py --config "$CONTAINER_OUTDIR/run_config.yaml" || { echo -e "${RED}❌ Mistake analysis failed!${NC}"; exit 1; }
+      python Workflow/04_examine_mistaken_predictions.py --config "$CONTAINER_CONFIG" || { echo -e "${RED}❌ Mistake analysis failed!${NC}"; exit 1; }
 
     END_TIME=$(date +%s)
     RUNTIME=$((END_TIME - START_TIME))
@@ -210,11 +212,13 @@ EOL
 
     center_text "${YELLOW}📝 Generating HTML Report${NC}"
     docker run --rm -v "$PWD":/app tap_pipeline:latest \
-      python Workflow/05_generate_report.py --config "$CONTAINER_OUTDIR/run_config.yaml" --outdir "$CONTAINER_OUTDIR"
+      python Workflow/05_generate_report.py --config "$CONTAINER_CONFIG" --outdir "$CONTAINER_OUTDIR"
     echo -e "${GREEN}📄 Report generated at $OUTDIR/report.html${NC}"
 
 else
-    # Batch mode - only runs Data Prep
+    # ──────────────────────────────────────────────────────────────── #
+    #               BATCH VALIDATION (TAP ONLY) MODE                  #
+    # ──────────────────────────────────────────────────────────────── #
     read -p "$(center_text '📂 Directory with validation .tif files:')" VAL_DIR
     read -p "$(center_text '📐 Crop size (e.g., 48):')" CROP_SIZE
     read -p "$(center_text '🔬 Pixel resolution (e.g., 0.65):')" PIXEL_RES
@@ -253,10 +257,13 @@ else
         MODEL_RUN_DIR="runs/${MODEL_ID}"
         mkdir -p "$MODEL_RUN_DIR"
         CONFIG_FILE="$CURR_OUTDIR/run_config.yaml"
-        CONTAINER_TRAIN="/data/${INPUT_TRAIN#Data/}"
-        CONTAINER_VAL="/data/${VAL_MOVIE#Data/}"
-        CONTAINER_OUTDIR="/app/${CURR_OUTDIR}"
-        CONTAINER_RUNSDIR="/app/runs/${MODEL_ID}"
+
+        # Container path mappings
+        CONTAINER_TRAIN="/app/$INPUT_TRAIN"
+        CONTAINER_VAL="/app/$VAL_MOVIE"
+        CONTAINER_OUTDIR="/app/$CURR_OUTDIR"
+        CONTAINER_RUNSDIR="/app/$MODEL_RUN_DIR"
+        CONTAINER_CONFIG="$CONTAINER_OUTDIR/run_config.yaml"
 
         cat <<EOL > "$CONFIG_FILE"
 name: $MODEL_ID
@@ -288,21 +295,30 @@ pixel_resolution: $PIXEL_RES
 tensorboard: false
 write_final_cams: true
 binarize: false
-config_yaml: "$CONTAINER_OUTDIR/run_config.yaml"
+config_yaml: "$CONTAINER_CONFIG"
+input_frame: "$CONTAINER_VAL"
+data_save_dir: "$CONTAINER_OUTDIR"
 EOL
 
         center_text "${BLUE}🚀 TAP-only eval for $BASENAME${NC}"
         LOGFILE="$CURR_OUTDIR/pipeline_log.txt"
-        exec > >(tee -i "$LOGFILE")
-        exec 2>&1
+        (
+          exec > >(tee -i "$LOGFILE")
+          exec 2>&1
 
-        START_TIME=$(date +%s)
-        docker run --rm -v "$PWD":/app tap_pipeline:latest \
-            python Workflow/02_data_prep.py --config "$CONTAINER_OUTDIR/run_config.yaml" \
-            || { echo -e "${RED}❌ TAP-only data prep failed for $BASENAME!${NC}"; RUN_SUMMARY+="\n🔸 $BASENAME: FAILED!"; continue; }
-        END_TIME=$(date +%s)
-        RUNTIME=$((END_TIME - START_TIME))
-        RUN_SUMMARY+="\n🔸 $BASENAME: SUCCESS. Output Dir: $CURR_OUTDIR (Runtime: $((RUNTIME / 60)) min $((RUNTIME % 60)) sec)"
+          START_TIME=$(date +%s)
+          docker run --rm -v "$PWD":/app tap_pipeline:latest \
+            python Workflow/02_data_prep.py --config "$CONTAINER_CONFIG" \
+            || exit 99
+          END_TIME=$(date +%s)
+          RUNTIME=$((END_TIME - START_TIME))
+          echo "[$BASENAME] Completed in $((RUNTIME/60))m $((RUNTIME%60))s"
+        )
+        if [[ $? -eq 99 ]]; then
+          RUN_SUMMARY+="\n🔸 $BASENAME: FAILED!"
+        else
+          RUN_SUMMARY+="\n🔸 $BASENAME: SUCCESS. Output Dir: $CURR_OUTDIR"
+        fi
     done
 
     center_text "${GREEN}🎉 Batch TAP Validation Complete!${NC}"
@@ -317,8 +333,12 @@ EOL
     echo -e "${GREEN}───────────────────────────────────────────────────────────────${NC}"
 
     center_text "${YELLOW}📝 Generating HTML Report (Batch Mode)${NC}"
+    # Space-separated output directories, all in /app inside container
+    CONTAINER_OUTDIRS=""
+    for o in "${OUTDIRS[@]}"; do
+        CONTAINER_OUTDIRS+=" /app/$o"
+    done
     docker run --rm -v "$PWD":/app tap_pipeline:latest \
-        python Workflow/05_generate_report.py --batch_outdirs "${OUTDIRS[@]}"
+        python Workflow/05_generate_report.py --batch_outdirs $CONTAINER_OUTDIRS
     echo -e "${GREEN}📄 Batch report(s) generated.${NC}"
-
 fi
