@@ -24,22 +24,38 @@ from torch.utils.data import ConcatDataset, Dataset
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+# --- RECURSIVE YAML-SAFE FUNCTION ---
+def make_yaml_safe(obj):
+    """Recursively convert any non-primitive object to string for YAML safety."""
+    if isinstance(obj, (str, int, float, bool, type(None))):
+        return obj
+    elif isinstance(obj, dict):
+        return {k: make_yaml_safe(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [make_yaml_safe(v) for v in obj]
+    else:
+        return str(obj)
+
 # Save full config + metadata for reproducibility
 def save_config_metadata(args, output_dir):
     metadata = {
-        "timestamp": datetime.now().isoformat(),
-        "python_version": platform.python_version(),
-        "torch_version": torch.__version__,
-        "cuda_available": torch.cuda.is_available(),
+        "timestamp": str(datetime.now().isoformat()),
+        "python_version": str(platform.python_version()),
+        "torch_version": str(torch.__version__),
+        "cuda_available": bool(torch.cuda.is_available()),
+        "cuda_version": str(getattr(torch.version, "cuda", "unknown")),
     }
     try:
         repo = git.Repo(search_parent_directories=True)
-        metadata["git_commit"] = repo.head.object.hexsha
+        metadata["git_commit"] = str(repo.head.object.hexsha)
     except Exception:
         metadata["git_commit"] = "unknown"
     config_path = Path(output_dir) / "preprocessing_config.yaml"
+
+    yaml_ready = make_yaml_safe({**vars(args), **metadata})
+
     with open(config_path, "w") as f:
-        yaml.safe_dump({**vars(args), **metadata}, f)
+        yaml.safe_dump(yaml_ready, f)
     print(f"Saved config to {config_path}")
 
 def _get_paths_recursive(paths: Sequence[str], level: int):
@@ -220,11 +236,6 @@ class CellEventDataset(Dataset):
         if size is None:
             self._size = imgs[0, 0].shape
         else:
-            # assert np.all(
-            # np.array(size) <= np.array(imgs[0, 0].shape)
-            # ), f"{size=} {imgs[0,0].shape=}"
-            # self._size = size
-
             self._size = tuple(min(a, b) for a, b in zip(size, imgs[0, 0].shape))
 
         if random_crop:
