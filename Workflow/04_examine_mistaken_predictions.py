@@ -182,6 +182,25 @@ def _get_paths_recursive(paths: Sequence[str], level: int):
         input_rec = new_inps
     return input_rec
 
+# ------------------- THIS IS THE ONLY NEW FUNCTION ADDED -------------------
+def _load_image_folder(fnames, split_start, split_end):
+    import tifffile
+    import numpy as np
+
+    imgs = []
+    total = len(fnames)
+    start = int(total * split_start)
+    end = int(total * split_end)
+    fnames = fnames[start:end]
+    for fname in fnames:
+        if str(fname).endswith('.tif') or str(fname).endswith('.tiff'):
+            img = tifffile.imread(str(fname))
+        else:
+            from PIL import Image
+            img = np.array(Image.open(fname))
+        imgs.append(img)
+    return np.stack(imgs)
+# --------------------------------------------------------------------------
 
 def _load(path, split_start, split_end, n_images=None):
     """Loads image from disk into CPU memory.
@@ -219,7 +238,7 @@ def _load(path, split_start, split_end, n_images=None):
             raise ValueError(f"Could not find ay images in {inp}")
 
         fnames = fnames[:n_images]
-        imgs = self._load_image_folder(fnames, split_start, split_end)
+        imgs = _load_image_folder(fnames, split_start, split_end)  # <---- ONLY CHANGE HERE
 
     elif inp.suffix == ".tif" or inp.suffix == ".tiff":
         logger.info(f"Loading {inp}")
