@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # ──────────────────────────────────────────────────────────────── #
-#                        CELLFLOW PIPELINE                        #
-#                  Conda Version (NO Nextflow Needed)             #
+#                 CELLFLOW PIPELINE: SELF-CONFIGURING             #
+#      (Conda auto-install + environment bootstrap + pipeline)     #
 # ──────────────────────────────────────────────────────────────── #
 
 # ───────────── Terminal Colors ───────────── #
@@ -11,6 +11,10 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
+
+# ───────────── Locale (for font/Unicode issues) ───────────── #
+export LC_ALL=C.UTF-8
+export LANG=C.UTF-8
 
 # ───────────── Help Option ───────────── #
 if [[ "$1" == "--help" || "$1" == "-h" ]]; then
@@ -26,19 +30,58 @@ fi
 trap 'echo -e "\n${RED}⚡️ Script interrupted by user. Exiting!${NC}"; exit 1' SIGINT
 
 # ──────────────────────────────────────────────────────────────── #
-#                  CONDA ENVIRONMENT CHECK                        #
+#      CONDA/AUTOINSTALL/ENV CREATION                             #
 # ──────────────────────────────────────────────────────────────── #
 ENV_NAME="cellflow-env"
-eval "$(conda shell.bash hook)"
+ENV_YML="environment.yml"
 
-echo -e "${YELLOW}🔍 Checking Conda environment...${NC}"
+if ! command -v conda &> /dev/null; then
+    echo -e "${YELLOW}🔄 Conda not found. Installing Miniconda...${NC}"
+    wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh
+    bash miniconda.sh -b -p "$HOME/miniconda"
+    export PATH="$HOME/miniconda/bin:$PATH"
+    source "$HOME/miniconda/etc/profile.d/conda.sh"
+    echo -e "${GREEN}✅ Miniconda installed.${NC}"
+else
+    eval "$(conda shell.bash hook)"
+fi
+
 if ! conda env list | grep -qw "$ENV_NAME"; then
-    echo -e "${RED}❌ Conda env '$ENV_NAME' not found! Please create it first.${NC}"
-    exit 1
+    echo -e "${YELLOW}🔧 Creating Conda env '$ENV_NAME' from $ENV_YML...${NC}"
+    if [ ! -f "$ENV_YML" ]; then
+        echo -e "${RED}❌ $ENV_YML not found! Cannot create conda env.${NC}"
+        exit 1
+    fi
+    conda env create -f "$ENV_YML" -n "$ENV_NAME"
+    echo -e "${GREEN}✅ Conda environment '$ENV_NAME' created.${NC}"
 fi
 
 echo -e "${GREEN}🔄 Activating '$ENV_NAME'...${NC}"
+source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate $ENV_NAME || { echo -e "${RED}❌ Failed to activate '$ENV_NAME'!${NC}"; exit 1; }
+
+# ───────────── FONT FIX FOR MATPLOTLIB ───────────── #
+if command -v apt-get &> /dev/null; then
+    sudo apt-get update
+    sudo apt-get install -y fonts-dejavu-core fontconfig
+fi
+
+mkdir -p ~/.config/matplotlib
+echo "font.family: sans-serif
+font.sans-serif: DejaVu Sans
+" > ~/.config/matplotlib/matplotlibrc
+
+# ───────────── TAP/tarrow install (editable mode) ───────────── #
+echo -e "${YELLOW}🔗 Installing TAP/tarrow package in editable mode (if not already)...${NC}"
+if [ -d "TAP/tarrow" ] && [ -f "TAP/tarrow/setup.py" ]; then
+    pip show tarrow > /dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        pip install -e TAP/tarrow
+    fi
+else
+    echo -e "${RED}❌ TAP/tarrow directory or setup.py not found!${NC}"
+    exit 1
+fi
 
 # ───────────── Version Logging ───────────── #
 echo -e "${YELLOW}🔢 Environment Versions:${NC}"
@@ -142,9 +185,6 @@ tensorboard: true
 write_final_cams: false
 binarize: false
 config_yaml: "$CONFIG_FILE"
-# For workflow scripts needing explicit frame/mask/dir
-input_frame: "$INPUT_VAL"
-data_save_dir: "$OUTDIR"
 EOL
 
     center_text "${GREEN}📝 Configuration saved to $CONFIG_FILE${NC}"
@@ -162,16 +202,68 @@ EOL
     python Workflow/01_fine-tune.py --config "$CONFIG_FILE" || { echo -e "${RED}❌ Fine-tuning failed!${NC}"; exit 1; }
 
     center_text "${YELLOW}🚀 Data Preparation${NC}"
-    python Workflow/02_data_prep.py --config "$CONFIG_FILE" || { echo -e "${RED}❌ Data prep failed!${NC}"; exit 1; }
+    python Workflow/02_data_prep.py \
+        --input_frame "$INPUT_VAL" \
+        --input_mask "$INPUT_MASK" \
+        --data_save_dir "$OUTDIR" \
+        --size "$CROP_SIZE" \
+        --pixel_area_threshold 0 \
+        --binarize \
+        --data_seed "$SEED" \
+        || { echo -e "${RED}❌ Data prep failed!${NC}"; exit 1; }
+
+    # ──────────────────────────────────────────────────────────────── #
+    #                EVENT CLASSIFICATION (TAP MODEL FIX)             #
+    # ──────────────────────────────────────────────────────────────── #
+    TAP_MODEL_DIR="${MODEL_RUN_DIR}/${MODEL_ID}_backbone_${BACKBONE}"
+    echo "TAP model folder: $TAP_MODEL_DIR"
+    ls -lh "$TAP_MODEL_DIR"
 
     center_text "${YELLOW}🚀 Event Classification${NC}"
-    python Workflow/03_event_classification.py --config "$CONFIG_FILE" || { echo -e "${RED}❌ Classification failed!${NC}"; exit 1; }
+    python Workflow/03_event_classification.py \
+        --input_frame "$INPUT_VAL" \
+        --input_mask "$INPUT_MASK" \
+        --cam_size 960 \
+        --size "$CROP_SIZE" \
+        --batchsize 108 \
+        --training_epochs "$EPOCHS" \
+        --balanced_sample_size 50000 \
+        --crops_per_image 108 \
+        --model_seed "$SEED" \
+        --data_seed "$SEED" \
+        --data_save_dir "$OUTDIR" \
+        --num_runs 1 \
+        --model_save_dir "$MODEL_RUN_DIR" \
+        --model_id "$MODEL_ID" \
+        --cls_head_arch linear \
+        --backbone "$BACKBONE" \
+        --name "$MODEL_ID" \
+        --binarize false \
+        --TAP_model_load_path "$TAP_MODEL_DIR" \
+        || { echo -e "${RED}❌ Classification failed!${NC}"; exit 1; }
 
     center_text "${YELLOW}🚀 Examining Mistaken Predictions${NC}"
-    python Workflow/04_examine_mistaken_predictions.py --config "$CONFIG_FILE" || { echo -e "${RED}❌ Mistake analysis failed!${NC}"; exit 1; }
+    python Workflow/04_examine_mistaken_predictions.py \
+        --mistake_pred_dir "$MODEL_RUN_DIR" \
+        --masks_path "$INPUT_MASK" \
+        --TAP_model_load_path "$TAP_MODEL_DIR" \
+        --patch_size "$CROP_SIZE" \
+        --test_data_load_path "$OUTDIR/test_data_crops_flat.pth" \
+        --combined_model_load_dir "$MODEL_RUN_DIR" \
+        --model_id "$MODEL_ID" \
+        --cls_head_arch linear \
+        --num_egs_to_show 10 \
+        --save_data \
+        || { echo -e "${RED}❌ Mistake analysis failed!${NC}"; exit 1; }
 
     END_TIME=$(date +%s)
     RUNTIME=$((END_TIME - START_TIME))
+
+    # ──────────────────────────────────────────────────────────────── #
+    #                         GENERATE FIGURES                        #
+    # ──────────────────────────────────────────────────────────────── #
+    center_text "${YELLOW}📊 Generating Publication-Ready Figures${NC}"
+    python Workflow/06_generate_figures.py --config "$CONFIG_FILE" --outdir "$OUTDIR"
 
     # ──────────────────────────────────────────────────────────────── #
     #                              SUMMARY                            #
@@ -196,8 +288,19 @@ EOL
     # ──────────────────────────────────────────────────────────────── #
     center_text "${YELLOW}📝 Generating HTML Report${NC}"
     python Workflow/05_generate_report.py --config "$CONFIG_FILE" --outdir "$OUTDIR"
-    echo -e "${GREEN}📄 Report generated at $OUTDIR/report.html${NC}"
 
+    # ──────────────────────────────────────────────────────────────── #
+    #                       RESULTS SUMMARY                           #
+    # ──────────────────────────────────────────────────────────────── #
+    echo -e "${BLUE}─────────────────────────────────────────────${NC}"
+    echo -e "${GREEN}🎯 CELLFLOW RESULTS SUMMARY${NC}"
+    echo -e "${BLUE}─────────────────────────────────────────────${NC}"
+    echo -e "${YELLOW}🔸 Output directory    :${NC} $OUTDIR"
+    echo -e "${YELLOW}🔸 Log file           :${NC} $LOGFILE"
+    echo -e "${YELLOW}🔸 Config file        :${NC} $CONFIG_FILE"
+    echo -e "${YELLOW}🔸 HTML report        :${NC} $OUTDIR/report.html"
+    echo -e "${BLUE}─────────────────────────────────────────────${NC}"
+    echo -e "${GREEN}Open your report in your browser:${NC} file://$OUTDIR/report.html"
 else
     # ──────────────────────────────────────────────────────────────── #
     #               BATCH VALIDATION (TAP ONLY) MODE                  #
@@ -272,8 +375,6 @@ tensorboard: false
 write_final_cams: true
 binarize: false
 config_yaml: "$CONFIG_FILE"
-input_frame: "$VAL_MOVIE"
-data_save_dir: "$CURR_OUTDIR"
 EOL
 
         center_text "${BLUE}🚀 TAP-only eval for $BASENAME${NC}"
@@ -283,16 +384,30 @@ EOL
           exec 2>&1
 
           START_TIME=$(date +%s)
-          python Workflow/02_data_prep.py --config "$CONFIG_FILE" || { echo -e "${RED}❌ TAP-only data prep failed for $BASENAME!${NC}"; exit 99; }
+          python Workflow/02_data_prep.py \
+            --input_frame "$VAL_MOVIE" \
+            --input_mask "" \
+            --data_save_dir "$CURR_OUTDIR" \
+            --size "$CROP_SIZE" \
+            --pixel_area_threshold 0 \
+            --binarize \
+            --data_seed "$SEED" \
+            || { echo -e "${RED}❌ TAP-only data prep failed for $BASENAME!${NC}"; exit 99; }
           END_TIME=$(date +%s)
           RUNTIME=$((END_TIME - START_TIME))
-          echo "[$BASENAME] Completed in $((RUNTIME/60))m $((RUNTIME%60))s"
+          echo "[$BASENAME] Completed in $((RUNTIME/60))m $((RUNTIME% 60))s"
         )
         if [[ $? -eq 99 ]]; then
           RUN_SUMMARY+="\n🔸 $BASENAME: FAILED!"
         else
           RUN_SUMMARY+="\n🔸 $BASENAME: SUCCESS. Output Dir: $CURR_OUTDIR"
         fi
+
+        # ──────────────────────────────────────────────────────────────── #
+        #           GENERATE FIGURES FOR THIS MOVIE (TAP batch)           #
+        # ──────────────────────────────────────────────────────────────── #
+        center_text "${YELLOW}📊 Generating Figures (Batch Mode)${NC}"
+        python Workflow/06_generate_figures.py --config "$CONFIG_FILE" --outdir "$CURR_OUTDIR"
     done
 
     # ──────────────────────────────────────────────────────────────── #
@@ -314,5 +429,23 @@ EOL
     # ──────────────────────────────────────────────────────────────── #
     center_text "${YELLOW}📝 Generating HTML Report (Batch Mode)${NC}"
     python Workflow/05_generate_report.py --batch_outdirs "${OUTDIRS[@]}"
-    echo -e "${GREEN}📄 Batch report(s) generated.${NC}"
+
+    # ──────────────────────────────────────────────────────────────── #
+    #                       BATCH RESULTS SUMMARY                     #
+    # ──────────────────────────────────────────────────────────────── #
+    echo -e "${BLUE}─────────────────────────────────────────────${NC}"
+    echo -e "${GREEN}🎯 CELLFLOW BATCH RESULTS SUMMARY${NC}"
+    echo -e "${BLUE}─────────────────────────────────────────────${NC}"
+    echo -e "${YELLOW}🔸 Output directories:${NC}"
+    for d in "${OUTDIRS[@]}"; do
+        echo -e "   $d"
+        if [ -f "$d/report.html" ]; then
+            echo -e "     ↳ ${GREEN}Report:${NC} $d/report.html"
+        fi
+        if [ -f "$d/pipeline_log.txt" ]; then
+            echo -e "     ↳ ${GREEN}Log:   ${NC} $d/pipeline_log.txt"
+        fi
+    done
+    echo -e "${BLUE}─────────────────────────────────────────────${NC}"
+    echo -e "${GREEN}Open any report in your browser, e.g.:${NC} file://[OUTPUTDIR]/report.html"
 fi
