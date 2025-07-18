@@ -35,16 +35,9 @@ banner() {
     echo -e "${BLUE}───────────────────────────────────────────────────────────────${NC}"
 }
 
-# --- Spinner for Long Steps
-spin() {
-    local msg="$1"
-    local -a marks=('/' '-' '\\' '|')
-    while :; do for m in "${marks[@]}"; do printf "\r${CYAN}$msg $m${NC}"; sleep 0.1; done; done
-}
-
-# --- Prompt with default, validation and explanation
+# --- Interactive prompt with default, validation and explanation
 prompt_val() {
-    local var val prompt default regex explain
+    local prompt default regex explain val
     prompt="$1"
     default="$2"
     regex="$3"
@@ -54,7 +47,6 @@ prompt_val() {
         read -e -p "$(echo -e "${CYAN}$prompt${NC} [default: ${GREEN}$default${NC}]: ")" val
         val="${val:-$default}"
         if [[ -z "$regex" || "$val" =~ $regex ]]; then
-            eval "$var=\"$val\""
             echo "$val"
             return
         else
@@ -63,7 +55,7 @@ prompt_val() {
     done
 }
 
-# --- Interactive file/folder selector
+# --- Robust file selection
 select_file() {
     local prompt="$1"
     local filter="$2"
@@ -78,17 +70,22 @@ select_file() {
     if command -v fzf &> /dev/null; then
         printf "%s\n" "${files[@]}" | fzf --prompt="$prompt > "
     else
-        echo -e "${YELLOW}fzf not installed — fallback to numbered menu:${NC}"
-        for i in "${!files[@]}"; do echo "  [$i] ${files[$i]}"; done
         while true; do
+            echo -e "${YELLOW}fzf not installed — fallback to numbered menu:${NC}"
+            for i in "${!files[@]}"; do echo "  [$i] ${files[$i]}"; done
+            echo -e "${CYAN}Type the number of your file from the list and press enter.${NC}"
             read -p "Enter number: " selection
-            [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 0 ] && [ "$selection" -lt "${#files[@]}" ] && break
-            echo -e "${RED}Invalid selection. Try again.${NC}"
+            if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 0 ] && [ "$selection" -lt "${#files[@]}" ]; then
+                echo "${files[$selection]}"
+                return
+            else
+                echo -e "${RED}Invalid selection. Please enter a valid number from the list above.${NC}"
+            fi
         done
-        echo "${files[$selection]}"
     fi
 }
 
+# --- Robust directory selection
 select_dir() {
     local prompt="$1"
     local explain="$2"
@@ -102,27 +99,50 @@ select_dir() {
     if command -v fzf &> /dev/null; then
         printf "%s\n" "${dirs[@]}" | fzf --prompt="$prompt > "
     else
-        echo -e "${YELLOW}fzf not installed — fallback to numbered menu:${NC}"
-        for i in "${!dirs[@]}"; do echo "  [$i] ${dirs[$i]}"; done
         while true; do
+            echo -e "${YELLOW}fzf not installed — fallback to numbered menu:${NC}"
+            for i in "${!dirs[@]}"; do echo "  [$i] ${dirs[$i]}"; done
+            echo -e "${CYAN}Type the number of your directory from the list and press enter.${NC}"
             read -p "Enter number: " selection
-            [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 0 ] && [ "$selection" -lt "${#dirs[@]}" ] && break
-            echo -e "${RED}Invalid selection. Try again.${NC}"
+            if [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 0 ] && [ "$selection" -lt "${#dirs[@]}" ]; then
+                echo "${dirs[$selection]}"
+                return
+            else
+                echo -e "${RED}Invalid selection. Please enter a valid number from the list above.${NC}"
+            fi
         done
-        echo "${dirs[$selection]}"
     fi
 }
 
-# --- Check for fzf, offer install if not present
-if ! command -v fzf &> /dev/null; then
-    if command -v apt-get &> /dev/null; then
-        echo -e "${YELLOW}🔎 fzf not found, attempting to install...${NC}"
-        sudo apt-get update
-        sudo apt-get install -y fzf
-    else
-        echo -e "${YELLOW}⚠️ fzf not found. For interactive selection, install 'fzf'.${NC}"
+# --- Auto-install fzf (and Homebrew if needed)
+install_fzf_if_missing() {
+    if ! command -v fzf &> /dev/null; then
+        echo -e "${YELLOW}🔎 'fzf' not found. Attempting auto-install...${NC}"
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            # macOS: Try Homebrew first
+            if ! command -v brew &> /dev/null; then
+                echo -e "${YELLOW}🍺 Homebrew is not installed. Install it? (y/n)${NC}"
+                read -r REPLY
+                if [[ "$REPLY" =~ ^[Yy]$ ]]; then
+                    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+                    export PATH="/opt/homebrew/bin:$PATH"
+                else
+                    echo -e "${RED}Homebrew is required for fzf install on macOS. Exiting.${NC}"
+                    return 1
+                fi
+            fi
+            brew install fzf
+        elif command -v apt-get &> /dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y fzf
+        else
+            echo -e "${RED}Cannot auto-install fzf: unsupported platform. Please install fzf manually!${NC}"
+            return 1
+        fi
+        echo -e "${GREEN}✅ fzf installed!${NC}"
     fi
-fi
+}
+install_fzf_if_missing
 
 # --- Conda/Miniconda auto-install/activate
 ENV_NAME="cellflow-env"
@@ -247,7 +267,7 @@ if [ "$VAL_BATCH" == "0" ]; then
         exec "$0"
     fi
 
-    # --- Run pipeline (no abbreviations)
+    # --- Run pipeline
     MODEL_ID="$(basename "$INPUT_TRAIN" .tif)_${BACKBONE}_$TIMESTAMP"
     MODEL_RUN_DIR="runs/${MODEL_ID}"
     mkdir -p "$MODEL_RUN_DIR"
@@ -370,16 +390,19 @@ EOL
 
     banner "📝 Generating HTML Report"
     python Workflow/05_generate_report.py --config "$CONFIG_FILE" --outdir "$OUTDIR"
-    # Try to open HTML report (works on Mac, Linux with xdg-open, Windows with start)
+
+    # Try to open the HTML report automatically, if possible
     if [ -f "$OUTDIR/report.html" ]; then
         if command -v xdg-open &> /dev/null; then xdg-open "$OUTDIR/report.html" &>/dev/null; fi
         if command -v open &> /dev/null; then open "$OUTDIR/report.html" &>/dev/null; fi
         if command -v start &> /dev/null; then start "$OUTDIR/report.html" &>/dev/null; fi
+        echo -e "${GREEN}Open your report in your browser: file://$OUTDIR/report.html${NC}"
+    else
+        echo -e "${RED}HTML report was not generated. Please check logs.${NC}"
     fi
-    echo -e "${GREEN}Open your report in your browser: file://$OUTDIR/report.html${NC}"
 
 else
-    # --- Batch validation
+    # --- Batch validation mode
     VAL_DIR=$(select_dir "📂  Select directory with validation .tif files" "Choose the directory containing your validation .tif files.")
     CROP_SIZE=$(prompt_val "📐 Enter crop size (integer, e.g. 48)" "48" '^[0-9]+$')
     PIXEL_RES=$(prompt_val "🔬 Enter pixel resolution (float, e.g. 0.65)" "0.65" '^[0-9]+(\.[0-9]+)?$')
