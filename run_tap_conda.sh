@@ -1,40 +1,132 @@
 #!/bin/bash
 
 # ──────────────────────────────────────────────────────────────── #
-#                 CELLFLOW PIPELINE: SELF-CONFIGURING             #
-#      (Conda auto-install + environment bootstrap + pipeline)     #
+#                   CELLFLOW PIPELINE: USER-FRIENDLY              #
+#   (Auto Conda install + env setup + pipeline, interactive UI)   #
 # ──────────────────────────────────────────────────────────────── #
 
-# ───────────── Terminal Colors ───────────── #
+# --- Terminal Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+CYAN='\033[0;36m'
+NC='\033[0m'
 
-# ───────────── Locale (for font/Unicode issues) ───────────── #
 export LC_ALL=C.UTF-8
 export LANG=C.UTF-8
 
-# ───────────── Help Option ───────────── #
+# --- Help Option
 if [[ "$1" == "--help" || "$1" == "-h" ]]; then
     echo -e "${YELLOW}CELLFLOW PIPELINE${NC}"
     echo -e "Usage: bash $0"
     echo "You will be interactively prompted for input files/parameters."
     echo "Outputs go to ./runs/ and to your specified output directory."
-    echo -e "After run, open your HTML report in your browser.\n"
+    echo -e "After run, open your HTML report in your browser."
     exit 0
 fi
 
-# ───────────── Ctrl+C Trap with Cleanup ───────────── #
 trap 'echo -e "\n${RED}⚡️ Script interrupted by user. Exiting!${NC}"; exit 1' SIGINT
 
-# ──────────────────────────────────────────────────────────────── #
-#      CONDA/AUTOINSTALL/ENV CREATION                             #
-# ──────────────────────────────────────────────────────────────── #
+# --- Banner Function
+banner() {
+    echo -e "\n${BLUE}───────────────────────────────────────────────────────────────${NC}"
+    echo -e "${GREEN}$1${NC}"
+    echo -e "${BLUE}───────────────────────────────────────────────────────────────${NC}"
+}
+
+# --- Spinner for Long Steps
+spin() {
+    local msg="$1"
+    local -a marks=('/' '-' '\\' '|')
+    while :; do for m in "${marks[@]}"; do printf "\r${CYAN}$msg $m${NC}"; sleep 0.1; done; done
+}
+
+# --- Prompt with default, validation and explanation
+prompt_val() {
+    local var val prompt default regex explain
+    prompt="$1"
+    default="$2"
+    regex="$3"
+    explain="$4"
+    while true; do
+        [ -n "$explain" ] && echo -e "${YELLOW}$explain${NC}"
+        read -e -p "$(echo -e "${CYAN}$prompt${NC} [default: ${GREEN}$default${NC}]: ")" val
+        val="${val:-$default}"
+        if [[ -z "$regex" || "$val" =~ $regex ]]; then
+            eval "$var=\"$val\""
+            echo "$val"
+            return
+        else
+            echo -e "${RED}Invalid input! Please try again.${NC}"
+        fi
+    done
+}
+
+# --- Interactive file/folder selector
+select_file() {
+    local prompt="$1"
+    local filter="$2"
+    local explain="$3"
+    local files
+    IFS=$'\n' read -d '' -r -a files < <(find Data -type f -iname "$filter" && printf '\0')
+    if [ ${#files[@]} -eq 0 ]; then
+        echo -e "${RED}❌ No $filter files found in Data/.${NC}"
+        exit 1
+    fi
+    [ -n "$explain" ] && echo -e "${YELLOW}$explain${NC}"
+    if command -v fzf &> /dev/null; then
+        printf "%s\n" "${files[@]}" | fzf --prompt="$prompt > "
+    else
+        echo -e "${YELLOW}fzf not installed — fallback to numbered menu:${NC}"
+        for i in "${!files[@]}"; do echo "  [$i] ${files[$i]}"; done
+        while true; do
+            read -p "Enter number: " selection
+            [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 0 ] && [ "$selection" -lt "${#files[@]}" ] && break
+            echo -e "${RED}Invalid selection. Try again.${NC}"
+        done
+        echo "${files[$selection]}"
+    fi
+}
+
+select_dir() {
+    local prompt="$1"
+    local explain="$2"
+    local dirs
+    IFS=$'\n' read -d '' -r -a dirs < <(find Data -type d | grep -v "^\.$" && printf '\0')
+    if [ ${#dirs[@]} -eq 0 ]; then
+        echo -e "${RED}❌ No directories found in Data/.${NC}"
+        exit 1
+    fi
+    [ -n "$explain" ] && echo -e "${YELLOW}$explain${NC}"
+    if command -v fzf &> /dev/null; then
+        printf "%s\n" "${dirs[@]}" | fzf --prompt="$prompt > "
+    else
+        echo -e "${YELLOW}fzf not installed — fallback to numbered menu:${NC}"
+        for i in "${!dirs[@]}"; do echo "  [$i] ${dirs[$i]}"; done
+        while true; do
+            read -p "Enter number: " selection
+            [[ "$selection" =~ ^[0-9]+$ ]] && [ "$selection" -ge 0 ] && [ "$selection" -lt "${#dirs[@]}" ] && break
+            echo -e "${RED}Invalid selection. Try again.${NC}"
+        done
+        echo "${dirs[$selection]}"
+    fi
+}
+
+# --- Check for fzf, offer install if not present
+if ! command -v fzf &> /dev/null; then
+    if command -v apt-get &> /dev/null; then
+        echo -e "${YELLOW}🔎 fzf not found, attempting to install...${NC}"
+        sudo apt-get update
+        sudo apt-get install -y fzf
+    else
+        echo -e "${YELLOW}⚠️ fzf not found. For interactive selection, install 'fzf'.${NC}"
+    fi
+fi
+
+# --- Conda/Miniconda auto-install/activate
 ENV_NAME="cellflow-env"
 ENV_YML="environment.yml"
-
 if ! command -v conda &> /dev/null; then
     echo -e "${YELLOW}🔄 Conda not found. Installing Miniconda...${NC}"
     wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh
@@ -45,7 +137,6 @@ if ! command -v conda &> /dev/null; then
 else
     eval "$(conda shell.bash hook)"
 fi
-
 if ! conda env list | grep -qw "$ENV_NAME"; then
     echo -e "${YELLOW}🔧 Creating Conda env '$ENV_NAME' from $ENV_YML...${NC}"
     if [ ! -f "$ENV_YML" ]; then
@@ -55,23 +146,21 @@ if ! conda env list | grep -qw "$ENV_NAME"; then
     conda env create -f "$ENV_YML" -n "$ENV_NAME"
     echo -e "${GREEN}✅ Conda environment '$ENV_NAME' created.${NC}"
 fi
-
 echo -e "${GREEN}🔄 Activating '$ENV_NAME'...${NC}"
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate $ENV_NAME || { echo -e "${RED}❌ Failed to activate '$ENV_NAME'!${NC}"; exit 1; }
 
-# ───────────── FONT FIX FOR MATPLOTLIB ───────────── #
+# --- Font fix for matplotlib
 if command -v apt-get &> /dev/null; then
     sudo apt-get update
     sudo apt-get install -y fonts-dejavu-core fontconfig
 fi
-
 mkdir -p ~/.config/matplotlib
 echo "font.family: sans-serif
 font.sans-serif: DejaVu Sans
 " > ~/.config/matplotlib/matplotlibrc
 
-# ───────────── TAP/tarrow install (editable mode) ───────────── #
+# --- Install TAP/tarrow in editable mode if not already
 echo -e "${YELLOW}🔗 Installing TAP/tarrow package in editable mode (if not already)...${NC}"
 if [ -d "TAP/tarrow" ] && [ -f "TAP/tarrow/setup.py" ]; then
     pip show tarrow > /dev/null 2>&1
@@ -83,7 +172,7 @@ else
     exit 1
 fi
 
-# ───────────── Version Logging ───────────── #
+# --- Log versions
 echo -e "${YELLOW}🔢 Environment Versions:${NC}"
 echo -n "Python: "; python --version
 echo -n "Conda: "; conda --version
@@ -94,66 +183,78 @@ echo "----------------------------"
 # ──────────────────────────────────────────────────────────────── #
 #                           USER INPUT                            #
 # ──────────────────────────────────────────────────────────────── #
-center_text() {
-    local width=70
-    local text="$1"
-    printf "\n%*s\n\n" $(( (${#text} + width) / 2 )) "$text"
-}
+banner "🔬 CELLFLOW ML Pipeline Setup"
+echo -e "${CYAN}All data file and directory selection is interactive below.${NC}"
 
-center_text "${BLUE}🔬 CELLFLOW ML Pipeline Setup${NC}"
-echo -e "${YELLOW}ℹ️  Provide paths relative to the project root (e.g. Data/toy_data/toy_movie.tif)${NC}"
+# --- Select training movie
+INPUT_TRAIN=$(select_file "🎞️  Select training movie (.tif)" "*.tif" "Choose your training .tif (raw movie, NOT mask or binary event).")
+while [ ! -f "$INPUT_TRAIN" ]; do
+    echo -e "${RED}❌ File not found! Try again.${NC}"
+    INPUT_TRAIN=$(select_file "🎞️  Select training movie (.tif)" "*.tif")
+done
 
-read -p "$(center_text '📥 Path to training movie (.tif, e.g. Data/toy_data/toy_movie.tif):')" INPUT_TRAIN
-
-center_text "${BLUE}🧪 Validate on just 1 movie or on a whole directory?${NC}"
-echo "   0: Single validation movie"
-echo "   1: Validate on every .tif in a folder (no classifier, TAP metrics only!)"
-read -p "Select option (0 or 1): " VAL_BATCH
-
-if [[ "$VAL_BATCH" != "0" && "$VAL_BATCH" != "1" ]]; then
-    echo -e "${RED}❌ Invalid input. Please enter 0 or 1.${NC}"
-    exit 1
-fi
+# --- Choose validation mode
+while true; do
+    echo -e "${CYAN}Do you want to:${NC}\n  0: Validate on a single movie\n  1: Validate on all .tif files in a directory (no classifier, TAP metrics only!)"
+    read -p "Select option (0 or 1) [default: 0]: " VAL_BATCH
+    VAL_BATCH="${VAL_BATCH:-0}"
+    [[ "$VAL_BATCH" == "0" || "$VAL_BATCH" == "1" ]] && break
+    echo -e "${RED}Please enter 0 or 1.${NC}"
+done
 
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
 if [ "$VAL_BATCH" == "0" ]; then
-    # ──────────────────────────────────────────────────────────────── #
-    #                 SINGLE VALIDATION MOVIE (FULL PIPELINE)         #
-    # ──────────────────────────────────────────────────────────────── #
-    read -p "$(center_text '🧪 Path to validation movie (.tif):')" INPUT_VAL
-    read -p "$(center_text '🎭 Path to annotated mask (.tif):')" INPUT_MASK
-    read -p "$(center_text '📐 Crop size (e.g., 48):')" CROP_SIZE
-    read -p "$(center_text '🔬 Pixel resolution (e.g., 0.65):')" PIXEL_RES
-    read -p "$(center_text '🔁 Number of training epochs:')" EPOCHS
-    read -p "$(center_text '📂 Output directory path (e.g., Data/toy_data):')" OUTDIR
-    read -p "$(center_text '🎲 Random seed:')" SEED
-    read -p "$(center_text '🧠 Backbone (unet, spectformer-xs):')" BACKBONE
+    # --- Single validation
+    INPUT_VAL=$(select_file "🧪  Select validation movie (.tif)" "*.tif" "Select the validation .tif file (should differ from training movie).")
+    while [ ! -f "$INPUT_VAL" ]; do
+        echo -e "${RED}❌ File not found! Try again.${NC}"
+        INPUT_VAL=$(select_file "🧪  Select validation movie (.tif)" "*.tif")
+    done
 
-    # Input validation
-    re_int='^[0-9]+$'
-    re_float='^[0-9]+(\.[0-9]+)?$'
-    [ ! -f "$INPUT_TRAIN" ] && echo -e "${RED}❌ Training movie not found at '$INPUT_TRAIN'${NC}" && exit 1
-    [ ! -f "$INPUT_VAL" ] && echo -e "${RED}❌ Validation movie not found at '$INPUT_VAL'${NC}" && exit 1
-    [ ! -f "$INPUT_MASK" ] && echo -e "${RED}❌ Mask not found at '$INPUT_MASK'${NC}" && exit 1
-    [[ ! "$CROP_SIZE" =~ $re_int ]] && echo -e "${RED}❌ Crop size must be integer.${NC}" && exit 1
-    [[ ! "$EPOCHS" =~ $re_int ]] && echo -e "${RED}❌ Epochs must be integer.${NC}" && exit 1
-    [[ ! "$SEED" =~ $re_int ]] && echo -e "${RED}❌ Seed must be integer.${NC}" && exit 1
-    [[ ! "$PIXEL_RES" =~ $re_float ]] && echo -e "${RED}❌ Pixel resolution must be float.${NC}" && exit 1
-    [[ "$BACKBONE" != "unet" && "$BACKBONE" != "spectformer-xs" ]] && echo -e "${RED}❌ Unsupported backbone: $BACKBONE${NC}" && exit 1
+    INPUT_MASK=$(select_file "🎭  Select annotated mask (.tif)" "*mask*.tif" "Select the corresponding annotated mask (.tif) for validation movie. You can also pick a file with 'annotated' in its name.")
+    while [ ! -f "$INPUT_MASK" ]; do
+        echo -e "${RED}❌ File not found! Try again.${NC}"
+        INPUT_MASK=$(select_file "🎭  Select annotated mask (.tif)" "*mask*.tif")
+    done
 
-    # Automatic ID: movie name + backbone + timestamp
+    CROP_SIZE=$(prompt_val "📐 Enter crop size (integer, e.g. 48)" "48" '^[0-9]+$' "Typical: 48-128, must be an integer.")
+    PIXEL_RES=$(prompt_val "🔬 Enter pixel resolution (float, e.g. 0.65)" "0.65" '^[0-9]+(\.[0-9]+)?$' "Typical: 0.5-1.0 microns/pixel.")
+    EPOCHS=$(prompt_val "🔁 Number of training epochs" "25" '^[0-9]+$' "Number of training epochs (integer, e.g. 25).")
+    OUTDIR=$(prompt_val "📂 Output directory path" "Data/toy_data" '' "Where outputs/reports will be saved.")
+    SEED=$(prompt_val "🎲 Random seed (integer)" "42" '^[0-9]+$' "Random seed for reproducibility.")
+    while true; do
+        BACKBONE=$(prompt_val "🧠 Backbone (unet, spectformer-xs)" "unet" '' "Type 'unet' or 'spectformer-xs'.")
+        [[ "$BACKBONE" == "unet" || "$BACKBONE" == "spectformer-xs" ]] && break
+        echo -e "${RED}Unsupported backbone! Must be 'unet' or 'spectformer-xs'.${NC}"
+    done
+
+    # --- Review selections before continuing
+    banner "⚡️ Review your selections!"
+    echo -e "${YELLOW}Training movie :${NC} $INPUT_TRAIN"
+    echo -e "${YELLOW}Validation movie:${NC} $INPUT_VAL"
+    echo -e "${YELLOW}Mask file      :${NC} $INPUT_MASK"
+    echo -e "${YELLOW}Crop size      :${NC} $CROP_SIZE"
+    echo -e "${YELLOW}Pixel res      :${NC} $PIXEL_RES"
+    echo -e "${YELLOW}Epochs         :${NC} $EPOCHS"
+    echo -e "${YELLOW}Output dir     :${NC} $OUTDIR"
+    echo -e "${YELLOW}Seed           :${NC} $SEED"
+    echo -e "${YELLOW}Backbone       :${NC} $BACKBONE"
+    echo
+    read -p "$(echo -e "${CYAN}Proceed with these settings? (y/n)${NC} ")" CONFIRM
+    if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+        echo -e "${RED}Cancelled by user. Restarting...${NC}"
+        exec "$0"
+    fi
+
+    # --- Run pipeline (no abbreviations)
     MODEL_ID="$(basename "$INPUT_TRAIN" .tif)_${BACKBONE}_$TIMESTAMP"
     MODEL_RUN_DIR="runs/${MODEL_ID}"
     mkdir -p "$MODEL_RUN_DIR"
-
     OUTDIR="${OUTDIR%/}_${MODEL_ID}"
     mkdir -p "$OUTDIR"
-
-    # ──────────────────────────────────────────────────────────────── #
-    #                        SAVE CONFIG FILE                         #
-    # ──────────────────────────────────────────────────────────────── #
     CONFIG_FILE="$OUTDIR/run_config.yaml"
+
     cat <<EOL > "$CONFIG_FILE"
 name: $MODEL_ID
 epochs: $EPOCHS
@@ -187,21 +288,16 @@ binarize: false
 config_yaml: "$CONFIG_FILE"
 EOL
 
-    center_text "${GREEN}📝 Configuration saved to $CONFIG_FILE${NC}"
-
-    # ──────────────────────────────────────────────────────────────── #
-    #                       RUN FULL PIPELINE                         #
-    # ──────────────────────────────────────────────────────────────── #
+    banner "📝 Configuration saved to $CONFIG_FILE"
     LOGFILE="$OUTDIR/pipeline_log.txt"
     exec > >(tee -i "$LOGFILE")
     exec 2>&1
-
     START_TIME=$(date +%s)
 
-    center_text "${YELLOW}🚀 Training Model (Fine-tuning)${NC}"
+    banner "🚀 Training Model (Fine-tuning)"
     python Workflow/01_fine-tune.py --config "$CONFIG_FILE" || { echo -e "${RED}❌ Fine-tuning failed!${NC}"; exit 1; }
 
-    center_text "${YELLOW}🚀 Data Preparation${NC}"
+    banner "🚀 Data Preparation"
     python Workflow/02_data_prep.py \
         --input_frame "$INPUT_VAL" \
         --input_mask "$INPUT_MASK" \
@@ -212,14 +308,11 @@ EOL
         --data_seed "$SEED" \
         || { echo -e "${RED}❌ Data prep failed!${NC}"; exit 1; }
 
-    # ──────────────────────────────────────────────────────────────── #
-    #                EVENT CLASSIFICATION (TAP MODEL FIX)             #
-    # ──────────────────────────────────────────────────────────────── #
     TAP_MODEL_DIR="${MODEL_RUN_DIR}/${MODEL_ID}_backbone_${BACKBONE}"
     echo "TAP model folder: $TAP_MODEL_DIR"
     ls -lh "$TAP_MODEL_DIR"
 
-    center_text "${YELLOW}🚀 Event Classification${NC}"
+    banner "🚀 Event Classification"
     python Workflow/03_event_classification.py \
         --input_frame "$INPUT_VAL" \
         --input_mask "$INPUT_MASK" \
@@ -242,7 +335,7 @@ EOL
         --TAP_model_load_path "$TAP_MODEL_DIR" \
         || { echo -e "${RED}❌ Classification failed!${NC}"; exit 1; }
 
-    center_text "${YELLOW}🚀 Examining Mistaken Predictions${NC}"
+    banner "🚀 Examining Mistaken Predictions"
     python Workflow/04_examine_mistaken_predictions.py \
         --mistake_pred_dir "$MODEL_RUN_DIR" \
         --masks_path "$INPUT_MASK" \
@@ -259,78 +352,69 @@ EOL
     END_TIME=$(date +%s)
     RUNTIME=$((END_TIME - START_TIME))
 
-    # ──────────────────────────────────────────────────────────────── #
-    #                         GENERATE FIGURES                        #
-    # ──────────────────────────────────────────────────────────────── #
-    center_text "${YELLOW}📊 Generating Publication-Ready Figures${NC}"
+    banner "📊 Generating Publication-Ready Figures"
     python Workflow/06_generate_figures.py --config "$CONFIG_FILE" --outdir "$OUTDIR"
 
-    # ──────────────────────────────────────────────────────────────── #
-    #                              SUMMARY                            #
-    # ──────────────────────────────────────────────────────────────── #
-    center_text "${GREEN}🎉 CELLFLOW Pipeline Complete!${NC}"
-    echo -e "${GREEN}───────────────────────────────────────────────────────────────${NC}"
-    echo "🔹 Model ID      : $MODEL_ID"
-    echo "🔹 Model Dir     : $MODEL_RUN_DIR"
-    echo "🔹 Output Dir    : $OUTDIR"
-    echo "🔹 Crop Size     : $CROP_SIZE"
-    echo "🔹 Epochs        : $EPOCHS"
-    echo "🔹 Pixel Res     : $PIXEL_RES"
-    echo "🔹 Backbone      : $BACKBONE"
-    echo "🔹 Mask File     : $INPUT_MASK"
-    echo "🔹 Config File   : $CONFIG_FILE"
-    echo "🔹 Log File      : $LOGFILE"
-    echo "⏱️  Runtime: $((RUNTIME / 60)) min $((RUNTIME % 60)) sec"
-    echo -e "${GREEN}───────────────────────────────────────────────────────────────${NC}"
+    banner "🎉 CELLFLOW Pipeline Complete!"
+    echo -e "${YELLOW}Model ID      :${NC} $MODEL_ID"
+    echo -e "${YELLOW}Model Dir     :${NC} $MODEL_RUN_DIR"
+    echo -e "${YELLOW}Output Dir    :${NC} $OUTDIR"
+    echo -e "${YELLOW}Crop Size     :${NC} $CROP_SIZE"
+    echo -e "${YELLOW}Epochs        :${NC} $EPOCHS"
+    echo -e "${YELLOW}Pixel Res     :${NC} $PIXEL_RES"
+    echo -e "${YELLOW}Backbone      :${NC} $BACKBONE"
+    echo -e "${YELLOW}Mask File     :${NC} $INPUT_MASK"
+    echo -e "${YELLOW}Config File   :${NC} $CONFIG_FILE"
+    echo -e "${YELLOW}Log File      :${NC} $LOGFILE"
+    echo -e "${YELLOW}Runtime       :${NC} $((RUNTIME / 60)) min $((RUNTIME % 60)) sec"
 
-    # ──────────────────────────────────────────────────────────────── #
-    #                   GENERATE HTML REPORT (FULL)                   #
-    # ──────────────────────────────────────────────────────────────── #
-    center_text "${YELLOW}📝 Generating HTML Report${NC}"
+    banner "📝 Generating HTML Report"
     python Workflow/05_generate_report.py --config "$CONFIG_FILE" --outdir "$OUTDIR"
+    # Try to open HTML report (works on Mac, Linux with xdg-open, Windows with start)
+    if [ -f "$OUTDIR/report.html" ]; then
+        if command -v xdg-open &> /dev/null; then xdg-open "$OUTDIR/report.html" &>/dev/null; fi
+        if command -v open &> /dev/null; then open "$OUTDIR/report.html" &>/dev/null; fi
+        if command -v start &> /dev/null; then start "$OUTDIR/report.html" &>/dev/null; fi
+    fi
+    echo -e "${GREEN}Open your report in your browser: file://$OUTDIR/report.html${NC}"
 
-    # ──────────────────────────────────────────────────────────────── #
-    #                       RESULTS SUMMARY                           #
-    # ──────────────────────────────────────────────────────────────── #
-    echo -e "${BLUE}─────────────────────────────────────────────${NC}"
-    echo -e "${GREEN}🎯 CELLFLOW RESULTS SUMMARY${NC}"
-    echo -e "${BLUE}─────────────────────────────────────────────${NC}"
-    echo -e "${YELLOW}🔸 Output directory    :${NC} $OUTDIR"
-    echo -e "${YELLOW}🔸 Log file           :${NC} $LOGFILE"
-    echo -e "${YELLOW}🔸 Config file        :${NC} $CONFIG_FILE"
-    echo -e "${YELLOW}🔸 HTML report        :${NC} $OUTDIR/report.html"
-    echo -e "${BLUE}─────────────────────────────────────────────${NC}"
-    echo -e "${GREEN}Open your report in your browser:${NC} file://$OUTDIR/report.html"
 else
-    # ──────────────────────────────────────────────────────────────── #
-    #               BATCH VALIDATION (TAP ONLY) MODE                  #
-    # ──────────────────────────────────────────────────────────────── #
-    read -p "$(center_text '📂 Directory with validation .tif files:')" VAL_DIR
-    read -p "$(center_text '📐 Crop size (e.g., 48):')" CROP_SIZE
-    read -p "$(center_text '🔬 Pixel resolution (e.g., 0.65):')" PIXEL_RES
-    read -p "$(center_text '📂 Output directory path (e.g., Data/toy_data):')" OUTDIR
-    read -p "$(center_text '🎲 Random seed:')" SEED
-    read -p "$(center_text '🧠 Backbone (unet, spectformer-xs):')" BACKBONE
+    # --- Batch validation
+    VAL_DIR=$(select_dir "📂  Select directory with validation .tif files" "Choose the directory containing your validation .tif files.")
+    CROP_SIZE=$(prompt_val "📐 Enter crop size (integer, e.g. 48)" "48" '^[0-9]+$')
+    PIXEL_RES=$(prompt_val "🔬 Enter pixel resolution (float, e.g. 0.65)" "0.65" '^[0-9]+(\.[0-9]+)?$')
+    OUTDIR=$(prompt_val "📂 Output directory path" "Data/toy_data" '')
+    SEED=$(prompt_val "🎲 Random seed (integer)" "42" '^[0-9]+$')
+    while true; do
+        BACKBONE=$(prompt_val "🧠 Backbone (unet, spectformer-xs)" "unet" '')
+        [[ "$BACKBONE" == "unet" || "$BACKBONE" == "spectformer-xs" ]] && break
+        echo -e "${RED}Unsupported backbone! Must be 'unet' or 'spectformer-xs'.${NC}"
+    done
 
-    re_int='^[0-9]+$'
-    re_float='^[0-9]+(\.[0-9]+)?$'
-    [ ! -f "$INPUT_TRAIN" ] && echo -e "${RED}❌ Training movie not found at '$INPUT_TRAIN'${NC}" && exit 1
-    [ ! -d "$VAL_DIR" ] && echo -e "${RED}❌ Validation directory not found at '$VAL_DIR'${NC}" && exit 1
-    [[ ! "$CROP_SIZE" =~ $re_int ]] && echo -e "${RED}❌ Crop size must be integer.${NC}" && exit 1
-    [[ ! "$SEED" =~ $re_int ]] && echo -e "${RED}❌ Seed must be integer.${NC}" && exit 1
-    [[ ! "$PIXEL_RES" =~ $re_float ]] && echo -e "${RED}❌ Pixel resolution must be float.${NC}" && exit 1
-    [[ "$BACKBONE" != "unet" && "$BACKBONE" != "spectformer-xs" ]] && echo -e "${RED}❌ Unsupported backbone: $BACKBONE${NC}" && exit 1
+    banner "⚡️ Review your selections!"
+    echo -e "${YELLOW}Training movie :${NC} $INPUT_TRAIN"
+    echo -e "${YELLOW}Validation dir :${NC} $VAL_DIR"
+    echo -e "${YELLOW}Crop size      :${NC} $CROP_SIZE"
+    echo -e "${YELLOW}Pixel res      :${NC} $PIXEL_RES"
+    echo -e "${YELLOW}Output dir     :${NC} $OUTDIR"
+    echo -e "${YELLOW}Seed           :${NC} $SEED"
+    echo -e "${YELLOW}Backbone       :${NC} $BACKBONE"
+    echo
+    read -p "$(echo -e "${CYAN}Proceed with these settings? (y/n)${NC} ")" CONFIRM
+    if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+        echo -e "${RED}Cancelled by user. Restarting...${NC}"
+        exec "$0"
+    fi
 
-    mapfile -t VAL_FILES < <(find "$VAL_DIR" -maxdepth 1 -type f -iname "*.tif" | sort)
-    if [ "${#VAL_FILES[@]}" -eq 0 ]; then
+    VAL_FILES=()
+    while IFS= read -r f; do VAL_FILES+=("$f"); done < <(find "$VAL_DIR" -maxdepth 1 -type f -iname "*.tif" | sort)
+    if [ ${#VAL_FILES[@]} -eq 0 ]; then
         echo -e "${RED}❌ No .tif files found in $VAL_DIR!${NC}"
         exit 1
     fi
 
-    echo -e "${YELLOW}📂 Found ${#VAL_FILES[@]} validation movies:${NC}"
-    for v in "${VAL_FILES[@]}"; do
-        echo "   - $v"
-    done
+    banner "📂 Found ${#VAL_FILES[@]} validation movies"
+    for v in "${VAL_FILES[@]}"; do echo "   - $v"; done
 
     RUN_SUMMARY=""
     OUTDIRS=()
@@ -377,7 +461,7 @@ binarize: false
 config_yaml: "$CONFIG_FILE"
 EOL
 
-        center_text "${BLUE}🚀 TAP-only eval for $BASENAME${NC}"
+        banner "🚀 TAP-only eval for $BASENAME"
         LOGFILE="$CURR_OUTDIR/pipeline_log.txt"
         (
           exec > >(tee -i "$LOGFILE")
@@ -403,17 +487,11 @@ EOL
           RUN_SUMMARY+="\n🔸 $BASENAME: SUCCESS. Output Dir: $CURR_OUTDIR"
         fi
 
-        # ──────────────────────────────────────────────────────────────── #
-        #           GENERATE FIGURES FOR THIS MOVIE (TAP batch)           #
-        # ──────────────────────────────────────────────────────────────── #
-        center_text "${YELLOW}📊 Generating Figures (Batch Mode)${NC}"
+        banner "📊 Generating Figures (Batch Mode)"
         python Workflow/06_generate_figures.py --config "$CONFIG_FILE" --outdir "$CURR_OUTDIR"
     done
 
-    # ──────────────────────────────────────────────────────────────── #
-    #                       SUMMARY (BATCH)                           #
-    # ──────────────────────────────────────────────────────────────── #
-    center_text "${GREEN}🎉 Batch TAP Validation Complete!${NC}"
+    banner "🎉 Batch TAP Validation Complete!"
     echo -e "${GREEN}───────────────────────────────────────────────────────────────${NC}"
     echo "🔹 Training movie: $INPUT_TRAIN"
     echo "🔹 Crop Size     : $CROP_SIZE"
@@ -424,28 +502,14 @@ EOL
     echo -e "🔹 Results: $RUN_SUMMARY"
     echo -e "${GREEN}───────────────────────────────────────────────────────────────${NC}"
 
-    # ──────────────────────────────────────────────────────────────── #
-    #                GENERATE HTML REPORT (TAP-BATCH)                 #
-    # ──────────────────────────────────────────────────────────────── #
-    center_text "${YELLOW}📝 Generating HTML Report (Batch Mode)${NC}"
+    banner "📝 Generating HTML Report (Batch Mode)"
     python Workflow/05_generate_report.py --batch_outdirs "${OUTDIRS[@]}"
-
-    # ──────────────────────────────────────────────────────────────── #
-    #                       BATCH RESULTS SUMMARY                     #
-    # ──────────────────────────────────────────────────────────────── #
-    echo -e "${BLUE}─────────────────────────────────────────────${NC}"
-    echo -e "${GREEN}🎯 CELLFLOW BATCH RESULTS SUMMARY${NC}"
-    echo -e "${BLUE}─────────────────────────────────────────────${NC}"
-    echo -e "${YELLOW}🔸 Output directories:${NC}"
     for d in "${OUTDIRS[@]}"; do
-        echo -e "   $d"
         if [ -f "$d/report.html" ]; then
-            echo -e "     ↳ ${GREEN}Report:${NC} $d/report.html"
-        fi
-        if [ -f "$d/pipeline_log.txt" ]; then
-            echo -e "     ↳ ${GREEN}Log:   ${NC} $d/pipeline_log.txt"
+            if command -v xdg-open &> /dev/null; then xdg-open "$d/report.html" &>/dev/null; fi
+            if command -v open &> /dev/null; then open "$d/report.html" &>/dev/null; fi
+            if command -v start &> /dev/null; then start "$d/report.html" &>/dev/null; fi
         fi
     done
-    echo -e "${BLUE}─────────────────────────────────────────────${NC}"
-    echo -e "${GREEN}Open any report in your browser, e.g.:${NC} file://[OUTPUTDIR]/report.html"
+    echo -e "${GREEN}Open any report in your browser, e.g.: file://[OUTPUTDIR]/report.html${NC}"
 fi
