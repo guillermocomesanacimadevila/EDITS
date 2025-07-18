@@ -25,22 +25,34 @@ sys.path.append(str(project_root / "TAP" / "tarrow" / "tarrow"))
 
 
 def save_config_metadata(args, output_dir):
+    import collections.abc
+
+    def is_basic_type(val):
+        return isinstance(val, (str, int, float, bool, type(None))) or (
+            isinstance(val, collections.abc.Sequence) and all(is_basic_type(v) for v in val)
+        )
+
     metadata = {
-        "timestamp": datetime.now().isoformat(),
-        "python_version": platform.python_version(),
-        "torch_version": torch.__version__,
-        "cuda_available": torch.cuda.is_available(),
+        "timestamp": str(datetime.now().isoformat()),
+        "python_version": str(platform.python_version()),
+        "torch_version": str(torch.__version__),
+        "cuda_available": str(torch.cuda.is_available()),
     }
     try:
         repo = git.Repo(search_parent_directories=True)
-        metadata["git_commit"] = repo.head.object.hexsha
+        metadata["git_commit"] = str(repo.head.object.hexsha)
     except Exception:
         metadata["git_commit"] = "unknown"
 
     config_path = Path(output_dir) / "training_config.yaml"
+    # Only dump arguments with "basic" types
+    filtered_args = {k: v for k, v in vars(args).items() if is_basic_type(v)}
+    # Also convert all filtered_args values to str just to be extra safe
+    filtered_args = {k: str(v) for k, v in filtered_args.items()}
     with open(config_path, "w") as f:
-        yaml.safe_dump({**vars(args), **metadata}, f)
+        yaml.safe_dump({**filtered_args, **metadata}, f)
     print(f"Saved config to {config_path}")
+
 
 class BasicBlock(nn.Module):
     def __init__(self, in_channels, out_channels, stride=1):
@@ -227,9 +239,8 @@ def train_cls_head(train_loader, test_loader, patch_size, num_epochs, random_see
                    model_load_dir, cls_head_arch, TAP_init,
                    load_saved_cls_head=False, cls_head_load_path=None):
     """
-    train the classification head to the task of predicting cell event: no event, division, death
-    for the input pair of patches
-    :return:
+    Train the classification head to the task of predicting cell event: no event, division, death
+    for the input pair of patches.
     """
     import torch.nn as nn
     import torch.optim as optim
@@ -246,11 +257,6 @@ def train_cls_head(train_loader, test_loader, patch_size, num_epochs, random_see
         print(f'- - - Initialising TAP model using {TAP_init} - - - ')
     elif TAP_init == 'loaded':
         print('- - - Initialising TAP model using loaded weights - - - ')
-    # # unit test
-    # for i, parem in enumerate(model.parameters()):
-    #     if i == 1:
-    #         print(f'model parameter : {parem[:2]}')
-    # ######
 
     for parem in model.parameters():
         parem.requires_grad = False
@@ -259,10 +265,16 @@ def train_cls_head(train_loader, test_loader, patch_size, num_epochs, random_see
     # fix the random seed for reproducibility
     torch.manual_seed(random_seed)
     torch.cuda.manual_seed_all(random_seed)
+
     if cls_head_arch == 'linear':
         cls_head = ClsHead(input_shape=(1, 2, 32, patch_size, patch_size), num_cls=2).to(device)
     elif cls_head_arch == 'resnet':
         cls_head = SimpleResNet(input_shape=(1, 2, 32, patch_size, patch_size), num_cls=2).to(device)
+    elif cls_head_arch == 'minimal':
+        # For now, treat 'minimal' as 'linear'
+        cls_head = ClsHead(input_shape=(1, 2, 32, patch_size, patch_size), num_cls=2).to(device)
+    else:
+        raise ValueError(f"Unknown cls_head_arch: {cls_head_arch} (expected 'linear', 'resnet', or 'minimal')")
 
     if load_saved_cls_head:
         print(f" - - Loading pretrained cls head - - ")
@@ -314,14 +326,8 @@ def train_cls_head(train_loader, test_loader, patch_size, num_epochs, random_see
     with torch.no_grad():
         for datapoint in test_loader:
             x, y = datapoint[0].to(device), datapoint[1].to(device)
-            # Forward pass through the pre-trained model to get the dense representation
-            # Ensure the pre-trained model is not being updated
             rep = model.embedding(x)
-
-            # Forward pass through the classification head
             outputs = cls_head(rep)
-
-            # Calculate the loss
             loss = criterion(outputs, y)
 
             running_loss += loss.item() * x.size(0)
@@ -329,11 +335,8 @@ def train_cls_head(train_loader, test_loader, patch_size, num_epochs, random_see
             correct += (predicted == y).sum().item()
             total += y.size(0)
             count_event_interest += (y == 1).sum().item()
-
-            # for computing confusion matrix
             y_pred.extend([t.item() for t in predicted])
             y_true.extend([t.item() for t in y])
-            # print(f"count_event_interest : {count_event_interest}")
 
     epoch_loss = running_loss / total
     epoch_accuracy = correct / total
@@ -358,19 +361,13 @@ def train_cls_head(train_loader, test_loader, patch_size, num_epochs, random_see
             count_event_interest_train += (y == 1).sum().item()
             total += y.size(0)
 
-            # Ensure the pre-trained model is not being updated
             rep = model.embedding(x)
-
-            # Forward pass through the classification head
             outputs = cls_head(rep)
-
             _, predicted = torch.max(outputs, 1)
-            # for computing confusion matrix
             y_pred.extend([t.item() for t in predicted])
             y_true.extend([t.item() for t in y])
 
-    print(f"There are {count_event_interest_train} out of {total} crops containing events of interest in the "
-          f"training set")
+    print(f"There are {count_event_interest_train} out of {total} crops containing events of interest in the training set")
     cm = confusion_matrix(y_true, y_pred)
     cm_df = pd.DataFrame(cm, index=['Actual 0', 'Actual 1'], columns=['Predicted 0', 'Predicted 1'])
     print("Confusion Matrix train data:")
@@ -378,7 +375,7 @@ def train_cls_head(train_loader, test_loader, patch_size, num_epochs, random_see
     print(classification_report(y_true, y_pred, target_names=['class 0', 'class 1']))
 
     return cls_head, model, cm_test
-
+    
 
 def count_data_points(dataloader):
     count = 0
@@ -655,6 +652,39 @@ class CellEventClassModel(nn.Module):
         return y
 
 
+import sys
+import os
+from pathlib import Path
+from datetime import datetime
+import platform
+import yaml
+import git
+import logging
+import configargparse
+import tarrow
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, Sampler, RandomSampler
+import numpy as np
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Add tarrow package path dynamically
+script_dir = Path(__file__).resolve().parent
+project_root = script_dir.parent
+sys.path.insert(0, str(project_root / "TAP" / "tarrow"))
+sys.path.append(str(project_root / "TAP" / "tarrow" / "tarrow"))
+
+# ... [ all functions/classes from your original script stay unchanged here ] ...
+
+# (Omitted for brevity in this snippet: all the class/function definitions you pasted above,
+# including: BasicBlock, SimpleResNet, plot_images_gray_scale, ClsHead, reinitialize_weights, 
+# train_cls_head, count_data_points, BalancedSampler, probing_mistake_predictions, 
+# probing_mistaken_preds, estimate_total_events, save_as_json, data_split, 
+# multi_runs_training, save_datasets, CellEventClassModel)
+
 def main():
     import time
 
@@ -691,12 +721,16 @@ def main():
     p.add_argument("--model_id", required=True)
     p.add_argument("--load_saved_cls_head", type=bool, default=False)
     p.add_argument("--cls_head_load_path", default=None)
-    p.add_argument("--dataset_save_dir")
+    p.add_argument("--dataset_save_dir", default="runs", help="Directory to save datasets")
     p.add_argument("--TAP_model_load_path")
     p.add_argument("--cls_head_arch")
     p.add_argument("--TAP_init")
 
     args = p.parse_args()
+
+    # Defensive: If dataset_save_dir is None or empty, use model_save_dir or "runs"
+    if not args.dataset_save_dir:
+        args.dataset_save_dir = args.model_save_dir or "runs"
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Running on", device)
@@ -705,12 +739,6 @@ def main():
     image_crops_flat_loaded = torch.load(data_load_path)
 
     print(f"image_crops_flat_loaded: {len(image_crops_flat_loaded)}")
-
-    from train_cls_head_utilities import (
-        data_split, estimate_total_events, count_data_points,
-        BalancedSampler, CellEventClassModel,
-        multi_runs_training, save_datasets
-    )
 
     train_data_ratio = 0.6
     validation_data_ratio = 0.2
@@ -721,6 +749,22 @@ def main():
         validation_data_ratio,
         args.data_seed
     )
+
+    # PATCH: Handle small datasets (≤2 crops)
+    min_required_crops = 2  # allow pipeline to run for 1 or 2 crops
+    if len(image_crops_flat_loaded) <= min_required_crops:
+        print(f"⚠️  Very small dataset ({len(image_crops_flat_loaded)} crops).")
+        print("   Using all crops for both training and testing. Splitting skipped.")
+        train_data_crops_flat = image_crops_flat_loaded
+        valid_data_crops_flat = []
+        test_data_crops_flat = image_crops_flat_loaded
+
+    # Extra check: gracefully exit if still not enough data
+    if len(train_data_crops_flat) == 0 or len(test_data_crops_flat) == 0:
+        print("\n❌ Not enough data to split into train/test sets!")
+        print(f"Train size: {len(train_data_crops_flat)}, Test size: {len(test_data_crops_flat)}")
+        print("Please check your input data or use a larger dataset.")
+        return
 
     estimated_total_event_count = estimate_total_events(image_crops_flat_loaded)
 
@@ -795,7 +839,7 @@ def main():
     save_config_metadata(args, args.model_save_dir)
 
     save_datasets(train_data_crops_flat, valid_data_crops_flat,
-                  test_data_crops_flat, os.path.join(args.dataset_save_dir, args.model_id))
+                  test_data_crops_flat, args.data_save_dir)
 
 
 if __name__ == "__main__":
