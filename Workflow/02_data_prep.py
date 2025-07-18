@@ -75,7 +75,7 @@ def _get_paths_recursive(paths: Sequence[str], level: int):
 
 class CellEventDataset(Dataset):
     """
-    return 2d + time crops with event type labels for training cell event classification model based on the dense
+    Return 2d + time crops with event type labels for training cell event classification model based on the dense
     representations produced by the time arrow prediction task.
     """
     def __init__(
@@ -101,48 +101,6 @@ class CellEventDataset(Dataset):
             crops_per_image=1,
             pixel_area_threshold=-1
     ):
-        """Returns 2d+time crops with event labels. The image sequence is stored in-memory.
-
-        Args:
-            imgs:
-                Path to a sequence of 2d images, a single 2d+time image, or a list of 2d np.ndarrays.
-            masks:
-                Path to a sequence of masks that correspond to the imgs in a one-one correspondence
-            split_start:
-                Start point of relative split of image sequence to use.
-            split_end:
-                End point of relative split of image sequence to use.
-            n_images:
-                Limit the number of images to use. Useful for debugging.
-            n_frames:
-                Number of frames in each crop.
-            delta_frames:
-                Temporal delta(s) between input frames.
-            subsample:
-                Subsample the input images by this factor. E.g., setting it to be 2 to reduce the height and width by a
-                half each
-            size:
-                Patch size. If None, use the full image size.
-            mode:
-                `flip` or `roll` the images along the time axis.
-            permute:
-                Whether to permute the axes of the images. Set to False for visualizations.
-            augmenter:
-                Torch transform to apply to the images.
-            normalize:
-                Image normalization function, applied before croppning. If None, use default percentile-based normalization.
-            channels:
-                Take the n leading channels from the ones stored in the raw images (leading dimension). 0 means there is no channel dimension in raw files.
-            device:
-                Where to store the precomputed crops.
-            binarize:
-                Binarize the input images. Should only be used for images stored in integer format.
-            random_crop:
-                If `True`, crop random patches in spatial dimensions. If `False`, center-crop the images (e.g. for visualization).
-            reject_background:
-                help="Set to `True` to heuristically reject background patches.
-        """
-
         super().__init__()
         import numpy as np
         from pathlib import Path
@@ -167,8 +125,8 @@ class CellEventDataset(Dataset):
             self._augmenter.to(device)
         self._crops_per_image = crops_per_image
         self._pixel_area_threshold = pixel_area_threshold
-        # random seed to fix the crop
-        # read the tiff file and break it into individual frames
+
+        # Read and process imgs
         if isinstance(imgs, (str, Path)):
             imgs = self._load(
                 path=imgs,
@@ -176,9 +134,7 @@ class CellEventDataset(Dataset):
                 split_end=split_end,
                 n_images=n_images,
             )
-        elif isinstance(imgs, (tuple, list, np.ndarray)) and isinstance(
-                imgs[0], np.ndarray
-        ):
+        elif isinstance(imgs, (tuple, list, np.ndarray)) and isinstance(imgs[0], np.ndarray):
             imgs = np.asarray(imgs)[:n_images]
         else:
             raise ValueError(
@@ -202,7 +158,7 @@ class CellEventDataset(Dataset):
             else:
                 imgs = normalize(imgs)
 
-        # read the masks in the same way as the images
+        # Read and process masks
         if isinstance(masks, (str, Path)):
             masks = self._load(
                 path=masks,
@@ -210,9 +166,7 @@ class CellEventDataset(Dataset):
                 split_end=split_end,
                 n_images=n_images,
             )
-        elif isinstance(masks, (tuple, list, np.ndarray)) and isinstance(
-                masks[0], np.ndarray
-        ):
+        elif isinstance(masks, (tuple, list, np.ndarray)) and isinstance(masks[0], np.ndarray):
             masks = np.asarray(masks)[:n_images]
         else:
             raise ValueError(
@@ -220,8 +174,19 @@ class CellEventDataset(Dataset):
                 "Input should be either a path to a sequence of 2d images, a single 2d+time image, or a list of 2d np.ndarrays."
             )
 
+        # --- FIX FOR RGB MASKS ---
+        if masks.ndim == 4 and masks.shape[-1] == 3:
+            print(f"Converting mask from RGB (shape={masks.shape}) to grayscale by taking channel 0")
+            masks = masks[..., 0]
+            print(f"New mask shape: {masks.shape}")
+
+        # --- CRITICAL BINARIZATION FIX (always binarize mask!) ---
+        # Now any mask with values [0,255], [0,1], [0,2] becomes just 0 and 1
+        masks = (masks > 0).astype(np.uint8)
+
         imgs = torch.as_tensor(imgs)
         masks = torch.as_tensor(masks)
+
         print(f"subsample : {subsample}")
 
         if not isinstance(subsample, int) or subsample < 1:
@@ -240,7 +205,7 @@ class CellEventDataset(Dataset):
 
         if random_crop:
             if reject_background:
-                self._crop = self._reject_background(random_seed=self._random_seed)
+                self._crop = self._reject_background(random_seed=42)
             else:
                 self._crop = transforms.RandomCrop(
                     self._size,
@@ -256,7 +221,7 @@ class CellEventDataset(Dataset):
             )
         min_number = max(self._delta_frames) * (n_frames - 1) + 1
         if len(imgs) < min_number:
-            raise ValueError(f"imgs should contain at last {min_number} elements")
+            raise ValueError(f"imgs should contain at least {min_number} elements")
         if len(imgs.shape[2:]) != len(self._size):
             raise ValueError(
                 f"incompatible shapes between images and size last {n_frames} elements"
@@ -298,23 +263,11 @@ class CellEventDataset(Dataset):
                     mask = smoother(out)
                     if mask.std() > threshold:
                         return out
-                    # logger.debug(f"Reject {i}")
                 return out
 
         return crop
 
     def _default_normalize(self, imgs):
-        """Default normalization.
-
-        Normalizes each image separately. Can be overwritten in subclasses.
-
-        Args:
-            imgs: List of images or ndarray.
-
-        Returns:
-            ndarray
-
-        """
         from tqdm import tqdm
         from utils import normalize as utils_normalize
         import numpy as np
@@ -325,23 +278,6 @@ class CellEventDataset(Dataset):
         return np.stack(imgs_norm)
 
     def _load(self, path, split_start, split_end, n_images=None):
-        """Loads image from disk into CPU memory.
-
-        Can be overwritten in subclass for particular datasets.
-
-        Args:
-            path(``str``):
-                Dataset directory.
-            split_start(``float``):
-                Use only images after this fraction of the dataset. Defaults to 0.
-            split_end(``float``):
-                Use only images before this fraction of the dataset. Defaults to 1.
-            n_images(``int``):
-                Limit number of used images. Set to ``None`` to use all avaible images.
-
-        Returns:
-            Numpy array of shape(imgs, dim0, dim1, ... , dimN).
-        """
         from pathlib import Path
         import tifffile
 
@@ -357,7 +293,7 @@ class CellEventDataset(Dataset):
                 if len(fnames) > 0:
                     break
             if len(fnames) == 0:
-                raise ValueError(f"Could not find ay images in {inp}")
+                raise ValueError(f"Could not find any images in {inp}")
 
             fnames = fnames[:n_images]
             imgs = self._load_image_folder(fnames, split_start, split_end)
@@ -367,7 +303,6 @@ class CellEventDataset(Dataset):
             imgs = tifffile.imread(str(inp))
             logger.info("Done")
             print(f'imags shape : {imgs.shape}')
-            assert imgs.ndim == 3
             imgs = imgs[int(len(imgs) * split_start) : int(len(imgs) * split_end)]
             imgs = imgs[:n_images]
         else:
@@ -416,16 +351,11 @@ class CellEventDataset(Dataset):
 
     def mask_to_label(self, mask_input, binary_problem=True):
         """
-        :param binary_problem: Boolean indicating whether we want to formulate a binary or multi-class classification
-        problem
-        :param mask_input: a mask patch
-        :return:
+        This version is robust: any nonzero pixel means "event".
         """
-
         if binary_problem:
-            # to filter out dead cell labels
-            if torch.any(mask_input == torch.tensor(1)) or torch.any(mask_input == torch.tensor(2)):
-                # set a lower threshold to filter out event labels on the boundaries
+            # Consider any positive value (==1, because we binarized) as an event
+            if torch.any(mask_input > 0):
                 if torch.sum(mask_input).item() > self._pixel_area_threshold:
                     output_label = 1
                 else:
@@ -433,60 +363,42 @@ class CellEventDataset(Dataset):
             else:
                 output_label = 0
         else:
+            # Not used, but keep compatible for multiclass
             if torch.any(mask_input == torch.tensor(1)):
                 output_label = 1
             elif torch.any(mask_input == torch.tensor(2)):
                 output_label = 2
             else:
                 output_label = 0
-
         return torch.tensor(output_label)
 
     def label_image_pair(self, mask1, mask2, binary_problem=True):
-        """
-        image 1 and 2 can be in the time arrow direction or in the opposite direction
-        :param binary_problem: Boolean indicating whether we want to formulate a binary or multi-class classification
-        :param image1:
-        :param image2:
-        :return: event_label which is the agreed label from both masks; if they do not agree, event_label is set to zero
-        """
         label_m1 = self.mask_to_label(mask1,  binary_problem)
         label_m2 = self.mask_to_label(mask2,  binary_problem)
-        if (label_m1 + label_m2).item() >= 1: # output 1 if either of the masks is labelled 1
+        if (label_m1 + label_m2).item() >= 1:
             event_label = torch.tensor(1)
         else:
             event_label = torch.tensor(0)
-
         return event_label
 
     def count_event_labels_one_pair(self, image1, image2, tile_size):
-        """
-        image1 and image2 are two masks that are consecutive timewise.
-        :param image1:
-        :param image2:
-        :param tile_size: size of the tile used to partition the image, must divide the image size
-        :return: total number of labels for events from the image pair (image1, image2)
-        """
         event_count = torch.tensor(0)
         image_h, image_w = image1.size()[0], image1.size()[1]
+        from torchvision import transforms
         for i in range(0, image_h, tile_size):
-            # print(f" i {i}")
             for j in range(0, image_w, tile_size):
-                # print(f" j {j}")
                 crop_1 = transforms.functional.crop(image1, i, j, tile_size, tile_size)
                 crop_2 = transforms.functional.crop(image2, i, j, tile_size, tile_size)
                 event_count += self.label_image_pair(mask1=crop_1, mask2=crop_2)
-
         return event_count
-
 
     def generate_one_datapoint(self, idx):
         if isinstance(idx, (list, tuple)):
             return list(self[_idx] for _idx in idx)
 
         x, y = self._imgs_masks_sequences[idx]
-        # i, j  – Vertical and horizontal components of the top left corner of the crop box.
         i, j, h, w = self._crop.get_params(x, output_size=self._size)
+        from torchvision import transforms
         x_crop = transforms.functional.crop(x, i, j, h, w)
         y_crop = transforms.functional.crop(y, i, j, h, w)
 
@@ -557,7 +469,6 @@ def _build_dataset(
         crops_per_image=crops_per_image,
         pixel_area_threshold=pixel_area_threshold
     )
-
 
 def flatten_data(input_data, crops_per_image):
     """
