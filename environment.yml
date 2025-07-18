@@ -14,14 +14,18 @@ dependencies:
   - pyyaml=6.0
   - gitpython=3.1
   - tifffile=2024.5
-  - opencv            
+  - opencv
   - typing-extensions
+  - fontconfig       # Ensures system fonts are discoverable by matplotlib
+  - dejavu-fonts     # A widely supported sans-serif font, matplotlib default
   - pip
-  - openjdk=17        
+  - openjdk=17
   - ca-certificates
   - nano
   - less
   - vim
+  # Optional: for quick pipeline testing
+  - pytest
   - pip:
       - configargparse==1.7
       - torch==2.2.2
@@ -29,3 +33,5 @@ dependencies:
       - torchaudio==2.2.2
       - dill==0.3.8
       - tensorboard==2.16.2
+      # If conda's opencv doesn't work for pipeline, ADD:
+      # - opencv-python==4.9.0.80
