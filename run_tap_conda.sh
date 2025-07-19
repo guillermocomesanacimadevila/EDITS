@@ -91,6 +91,36 @@ echo -n "PyTorch: "; python -c 'import torch; print(torch.__version__)' 2>/dev/n
 echo -n "Numpy: "; python -c 'import numpy; print(numpy.__version__)' 2>/dev/null || echo "N/A"
 echo "----------------------------"
 
+# ───────────── fzf Auto-Installer (Linux/macOS) ───────────── #
+if ! command -v fzf &> /dev/null; then
+    echo -e "${YELLOW}⚙️  fzf not found. Installing it for better file selection...${NC}"
+    OS_TYPE="$(uname)"
+
+    if [[ "$OS_TYPE" == "Darwin" ]]; then
+        if command -v brew &> /dev/null; then
+            echo -e "${BLUE}➡️  Using Homebrew to install fzf (macOS)...${NC}"
+            brew install fzf || { echo -e "${RED}❌ Failed to install fzf via brew.${NC}"; exit 1; }
+        else
+            echo -e "${RED}❌ Homebrew not found. Install it from https://brew.sh first.${NC}"
+            exit 1
+        fi
+    elif [[ "$OS_TYPE" == "Linux" ]]; then
+        if command -v apt-get &> /dev/null; then
+            echo -e "${BLUE}➡️  Using apt-get to install fzf (Linux)...${NC}"
+            sudo apt-get update -qq
+            sudo apt-get install -y fzf || { echo -e "${RED}❌ Failed to install fzf via apt.${NC}"; exit 1; }
+        else
+            echo -e "${RED}❌ apt-get not available. Install fzf manually.${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${RED}❌ Unsupported OS: $OS_TYPE. Install fzf manually.${NC}"
+        exit 1
+    fi
+
+    echo -e "${GREEN}✅ fzf installed successfully.${NC}"
+fi
+
 # ──────────────────────────────────────────────────────────────── #
 #         USER-FRIENDLY FILE SELECTION (fzf or fallback)          #
 # ──────────────────────────────────────────────────────────────── #
@@ -318,10 +348,10 @@ EOL
     RUNTIME=$((END_TIME - START_TIME))
 
     # ──────────────────────────────────────────────────────────────── #
-    #                         GENERATE FIGURES                        #
+    #         [REMOVED] GENERATE FIGURES SECTION (was 06_generate_figures.py)
     # ──────────────────────────────────────────────────────────────── #
-    center_text "${YELLOW}📊 Generating Publication-Ready Figures${NC}"
-    python Workflow/06_generate_figures.py --config "$CONFIG_FILE" --outdir "$OUTDIR"
+    # center_text "${YELLOW}📊 Generating Publication-Ready Figures${NC}"
+    # python Workflow/06_generate_figures.py --config "$CONFIG_FILE" --outdir "$OUTDIR"
 
     # ──────────────────────────────────────────────────────────────── #
     #                              SUMMARY                            #
@@ -462,10 +492,10 @@ EOL
         fi
 
         # ──────────────────────────────────────────────────────────────── #
-        #           GENERATE FIGURES FOR THIS MOVIE (TAP batch)           #
+        #         [REMOVED] GENERATE FIGURES SECTION (was 06_generate_figures.py)
         # ──────────────────────────────────────────────────────────────── #
-        center_text "${YELLOW}📊 Generating Figures (Batch Mode)${NC}"
-        python Workflow/06_generate_figures.py --config "$CONFIG_FILE" --outdir "$CURR_OUTDIR"
+        # center_text "${YELLOW}📊 Generating Figures (Batch Mode)${NC}"
+        # python Workflow/06_generate_figures.py --config "$CONFIG_FILE" --outdir "$CURR_OUTDIR"
     done
 
     # ──────────────────────────────────────────────────────────────── #
