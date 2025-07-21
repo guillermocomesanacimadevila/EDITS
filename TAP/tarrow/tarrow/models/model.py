@@ -26,7 +26,7 @@ from ..visualizations import create_visuals
 from ..visualizations import cam_insets
 
 from pdb import set_trace
-import shutil  # <<< used for destructive delete
+import shutil
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +37,6 @@ class NoOutputFolderException(Exception):
 def _tensor_random_choice(
     x: torch.Tensor, n_samples: Union[int, float]
 ) -> torch.Tensor:
-    """randomly select n_samples with replacement from a flat tensor
-    if n_samples is float, will be interpreted as fraction
-    """
     assert x.ndim == 1
 
     if isinstance(n_samples, float):
@@ -51,13 +48,13 @@ def _tensor_random_choice(
     return x[idx]
 
 def _git_commit():
-    """returns the git commit hash of the current repository if it exists, otherwise None (for debugging purposes)"""
     import git
 
     try:
         return str(git.Repo(Path(__file__).resolve().parents[2]).commit())
     except git.exc.InvalidGitRepositoryError:
         return None
+
 
 class TimeArrowNet(nn.Module):
     def __init__(
@@ -73,31 +70,6 @@ class TimeArrowNet(nn.Module):
         outdir: str = None,
         commit=None,
     ):
-        """Full TAP model consisting of single-image backbone, single_image projection head and joint classification head.
-
-        Args:
-            backbone:
-                Dense network architecture.
-            projection_head:
-                Dense projection head architecture.
-            classification_head:
-                Classification head architecture.
-            n_frames:
-                Number of input frames.
-            n_features:
-                Number of output features from the backbone.
-            n_input_channels:
-                Number of input channels.
-            device:
-                Device to run the model on.
-            symmetric:
-                If `True`, use permutation-equivariant classification head.
-            outdir:
-                Output directory for model checkpoints and tensorboard logs.
-            commit:
-                Commit hash of the current git commit, used for model loading.
-        """
-
         super().__init__()
 
         model_kwargs = dict(
@@ -133,7 +105,6 @@ class TimeArrowNet(nn.Module):
         self.n_frames = n_frames
         self.device = device
 
-        # Hook for cam layer
         self.proj_activations = None
         self.proj_gradients = None
         self.projection_head.register_forward_hook(self.get_activation)
@@ -142,14 +113,13 @@ class TimeArrowNet(nn.Module):
 
         self.outdir = outdir
         if self.outdir is not None:
-            with open(self.outdir / "model_kwargs.yaml", "tw") as f:
+            with open(self.outdir / "model_kwargs.yaml", "wt") as f:
                 yaml.dump(model_kwargs, f)
 
     @property
     def outdir(self):
         return self._outdir
 
-    # ------- PATCHED TO AUTO-CLEAN FOLDER INSTEAD OF CRASHING! -------
     @outdir.setter
     def outdir(self, path):
         import shutil
@@ -159,17 +129,14 @@ class TimeArrowNet(nn.Module):
 
         path = Path(path)
         if path.exists():
-            # If folder is not empty, REMOVE IT!
             if any(path.iterdir()):
                 print(f"⚠️ [TimeArrowNet] Removing existing model folder {path}")
                 shutil.rmtree(path)
-        # (Re-)make the folder, just to be sure
         path.mkdir(parents=True, exist_ok=True)
 
         self._outdir = path
         for sub in (".", "tb", "visuals"):
             (self._outdir / sub).mkdir(exist_ok=True, parents=True)
-    # -----------------------------------------------------------------
 
     def get_activation(self, model, input, output):
         self.proj_activations = output.detach()
@@ -178,40 +145,19 @@ class TimeArrowNet(nn.Module):
         self.proj_gradients = grad.detach()
 
     def forward(self, x, mode="classification"):
-        """
-        Args:
-            x: Tensor of size B, T, C, H, W
-            mode: str, can be
-                'classification'
-                'projection'
-                'both'
-
-        Returns:
-            final: Tensor of size B, n_classes
-            (projections: Tensor of size B, T, n_features, H, W)
-        """
-
-        # Flatten timepoints into the batch dimension
         s_in = x.shape
         x = x.flatten(end_dim=1)
 
-        # backbone features for every timepoint independently
         x = self.backbone(x)
         s_out = x.shape
 
-        # -> (Batch, Timepoints, n_backbone_features, D0, ..., Dn)
         features = x.reshape(s_in[:2] + (self.bb_n_feat,) + s_out[2:])
-        # for id backbone x = x.reshape(s[:2] + (1,) + x.shape[2:])
 
-        # projected features for every timepoint independently
-        # -> (Batch, Timepoints, n_features, D0, ..., Dn)
         projections = self.projection_head(features)
 
-        # Store gradients for gradcam
         if projections.requires_grad:
             projections.register_hook(self.get_gradients)
 
-        # classification merges features
         if mode == "classification":
             final = self.classification_head(projections)
             return final
@@ -226,32 +172,12 @@ class TimeArrowNet(nn.Module):
     def gradcam(
         self, x, class_id=0, norm=False, all_frames=False, tile_size=(512, 512)
     ):
-        """Grad-CAM with respect to projection layer
-
-        Args:
-            x:
-                Tensor of size T, C, H, W.
-            class_id:
-                Ground-truth class id. 0 when frame order is not altered.
-            norm:
-                If `True`, normalize output to (0,1).
-            all_frames:
-                If `True`, sum over all frames. If `False`, only consider first
-                time step that is put into classification head.
-            tile_size:
-                tuple of ints, size of tiles to process
-
-        Returns:
-            gradcam: Tensor of size H, W.
-        """
-
         if is_training := self.training:
             self.eval()
 
         assert x.ndim == 4, f"{x.ndim=}"
 
         def _get_alpha_and_activation(_x: torch.Tensor):
-            # print(f" - - - tile size - - - : {tile_size}")
             self.zero_grad()
             u = self(_x.unsqueeze(0))[0]
             u = u[class_id]
@@ -272,17 +198,15 @@ class TimeArrowNet(nn.Module):
             shape = (x.shape[0], self.n_features) + x.shape[2:]
             alpha = torch.zeros(shape, device=self.device)
             A = torch.zeros(shape, device=self.device)
-            # tile input to reduce memory requirements
             blocksize = x.shape[:2] + tuple(
                 min(t, s) for t, s in zip(tile_size, x.shape[2:])
             )
             tq = tile_iterator(
                 x,
                 blocksize=blocksize,
-                padsize=(0, 0, min(64, tile_size[0] // 4), min(64, tile_size[1] // 4)), # padsize=(0, 0, min(64, tile_size[0] // 4), min(64, tile_size[1] // 4))
+                padsize=(0, 0, min(64, tile_size[0] // 4), min(64, tile_size[1] // 4)),
                 mode="reflect",
             )
-            # for tile, s_src, s_dest in tqdm(tq, desc="grad cam with tiling"):
             for tile, s_src, s_dest in tq:
                 tile = torch.as_tensor(tile, device=self.device)
                 _alpha, _A = _get_alpha_and_activation(tile)
@@ -295,10 +219,8 @@ class TimeArrowNet(nn.Module):
                 alpha[s_src] = _alpha[s_dest]
                 A[s_src] = _A[s_dest]
 
-        # get the correct normalization (as A is already average summed)
         alpha = torch.sum(alpha, (-1, -2))
         cam = torch.einsum("tc,tcyx->tyx", alpha, A)
-
         cam = torch.abs(cam)
 
         if all_frames:
@@ -311,7 +233,6 @@ class TimeArrowNet(nn.Module):
 
         cam = cam.cpu().numpy()
         factor = np.array(x.shape[-2:]) / np.array(cam.shape)
-        # upsample CAM to input image size with interpolation
         if not np.all(factor - 1 == 0):
             cam = zoom(cam, factor, order=1)
 
@@ -321,15 +242,6 @@ class TimeArrowNet(nn.Module):
         return cam
 
     def embedding(self, x, layer=0):
-        """Returns the feature maps from the n-th last layer.
-
-        Args:
-            x:
-                Input of shape B, T, C, H, W.
-            layer:
-                Features are taken from that projection head layer.
-                Layers are numbered from last to first, starting at 0.
-        """
         _ = self(x, mode="projection")
         n = len(self.projection_head.features)
         if n <= layer:
@@ -342,17 +254,6 @@ class TimeArrowNet(nn.Module):
         return features
 
     def save(self, prefix="model", which="both", exist_ok: bool = False, outdir=None):
-        """Save entire model.
-
-        Uses `dill` as pickling module to be able to pickle the hooks(closures).
-        Refer to https://github.com/pytorch/pytorch/issues/1148.
-
-        Args:
-            prefix: File name prefix.
-            which: can be 'full', 'state', or 'both
-            exist_ok: If `True`, overwrite existing files.
-            outdir: Output directory. If `None`, use `self.outdir`.
-        """
         if outdir is None:
             outdir = self.outdir
 
@@ -379,20 +280,6 @@ class TimeArrowNet(nn.Module):
         ignore_commit=True,
         state_dict_path="model_state.pt",
     ):
-        """Load model from folder, either from state dict or from full model.
-
-        Args:
-            model_folder: Path to folder containing model.
-            from_state_dict: If `True`, load from state_dict, otherwise from `model_full.pt`.
-            map_location: Device where the params of the model will be loaded to.
-            ignore_commit:
-                If `True`, ignore mismatched commits of the saved model and
-                current code, and try to load the model anyway.
-            state_dict_path: Name of the state dict file.
-
-        Returns:
-            model: TimeArrowModel instance.
-        """
         model_folder = Path(model_folder)
         logging.info(f"Loading model from {model_folder}")
         kwargs = yaml.safe_load(open(model_folder / "model_kwargs.yaml", "rt"))
@@ -427,26 +314,12 @@ class TimeArrowNet(nn.Module):
         return model
 
     def save_example_images(self, loader, tb_writer, phase):
-        """Write example images to tensorboard.
-
-        Args:
-            loader: Torch Dataloader.
-            tb_writer: Tensorboard writer.
-            phase: 'train' or 'val'.
-        """
         logger.info("Write example images to tensorboard.")
         example_imgs, _ = next(iter(loader))
         logger.debug(f"{example_imgs.shape=}")
 
         def write_to_tb(imgs, name):
-            # only first channel
             imgs = imgs[:, :, 0, ...]
-            # imgs = (imgs - imgs.min(dim=(1,2,3), keepdim=True)[0]) / (
-            #     imgs.max(dim=(1,2,3), keepdim=True)[0] - imgs.min(dim=(1,2,3), keepdim=True)[0]
-            # )
-            # logger.debug(
-            # f"{name} min = {imgs.min():.2f} max = {imgs.max():.2f} mean {imgs.mean():.2f}"
-            # )
             for i in range(imgs.shape[1]):
                 tb_writer.add_image(
                     name,
@@ -477,36 +350,6 @@ class TimeArrowNet(nn.Module):
         weight_decay=1e-6,
         lambda_decorrelation=0.01,
     ):
-        """Train model.
-
-        Args:
-            loader_train:
-                Torch Dataloader for training.
-            loader_val:
-                Torch Dataloader for validation.
-            lr:
-                Learning rate.
-            lr_patience:
-                Patience for learning rate scheduler.
-            epochs:
-                Number of training epochs.
-            steps_per_epoch:
-                Number of training steps (samples / batch size) per epoch.
-            lr_scheduler:
-                Learning rate scheduler. Either 'plateau' or 'cyclic'.
-            visual_datasets:
-                Sequence of datasets to visualize in tensorboard.
-            visual_dataset_frequency (int):
-                Save attribution maps to tensorboard every n epochs.
-            tensorboard:
-                If `True`, write tensorboard logs.
-            save_checkpoint_every (int):
-                Save model checkpoint every n epochs.
-            weight_decay:
-                Weight decay for optimizer.
-            lambda_decorrelation:
-                Prefactor of decorrelation loss.
-        """
         assert self.outdir is not None
 
         optimizer = torch.optim.Adam(
@@ -533,7 +376,6 @@ class TimeArrowNet(nn.Module):
         criterion = torch.nn.CrossEntropyLoss(reduction="none")
         criterion_decorr = DecorrelationLoss()
 
-        # save visuals (e.g. cams) in model folder and tensorboard
         def _save_visuals(
             dataset: Sequence[Dataset], tb_writer, epoch: int, save_features=False
         ):
@@ -619,7 +461,6 @@ class TimeArrowNet(nn.Module):
 
                     loss = torch.mean(loss)
 
-                    # decorrelation loss
                     pro_batched = pro.flatten(0, 1)
                     loss_decorr = criterion_decorr(pro_batched)
 
@@ -653,6 +494,9 @@ class TimeArrowNet(nn.Module):
             )
             return metrics
 
+        # --- NEW: Accumulate per-epoch metrics for CSV ---
+        per_epoch_metrics = []
+
         if tensorboard:
             tb_writer = dict(
                 (key, SummaryWriter(str(self.outdir / "tb" / key)))
@@ -680,14 +524,28 @@ class TimeArrowNet(nn.Module):
             if lr_scheduler == "plateau":
                 scheduler.step(metrics_val["loss"])
 
-            for loader, phase, metr in zip(
+            for loader_, phase_, metr in zip(
                 (loader_train, loader_val),
                 ("train", "val"),
                 (metrics_train, metrics_val),
             ):
                 for k, v in metr.items():
-                    metrics[phase][k].append(v)
-                metrics[phase]["steps"].append((i + 1) * len(loader))
+                    metrics[phase_][k].append(v)
+                metrics[phase_]["steps"].append((i + 1) * len(loader_))
+
+            # --- CSV collection ---
+            per_epoch_metrics.append({
+                "epoch": i,
+                "train_loss": metrics_train["loss"],
+                "train_loss_decorr": metrics_train["loss_decorr"],
+                "train_acc": metrics_train["accuracy"],
+                "train_pred1_ratio": metrics_train["pred1_ratio"],
+                "val_loss": metrics_val["loss"],
+                "val_loss_decorr": metrics_val["loss_decorr"],
+                "val_acc": metrics_val["accuracy"],
+                "val_pred1_ratio": metrics_val["pred1_ratio"],
+                "lr": metrics_train["lr"],
+            })
 
             if self.outdir is not None:
                 if visual_dataset_frequency > 0 and i % visual_dataset_frequency == 0:
@@ -704,25 +562,45 @@ class TimeArrowNet(nn.Module):
                 for tbw in tb_writer.values():
                     tbw.flush()
 
+            checkpoint_dir = self.outdir / "checkpoints"
+            checkpoint_dir.mkdir(exist_ok=True, parents=True)
+
             if i % save_checkpoint_every == 0:
                 logger.info(f"Saving checkpoint: epoch = {i}")
                 self.save(
                     prefix=f"epoch_{i:05d}",
                     which="state",
-                    outdir=self.outdir / "checkpoints",
+                    outdir=checkpoint_dir,
                 )
 
-            target = metrics["val"]["loss"]
+            target = [m["val_loss"] for m in per_epoch_metrics]
             if np.argmin(target) + 1 == i:
                 logger.info(f"Saving best model: epoch = {i} val_loss = {target[-1]}")
                 self.save(which="both", exist_ok=True)
 
-        if tb_writer is not None:
-            _save_visuals(visual_datasets, tb_writer, epoch=i, save_features=True)
+        # --- Write per-epoch CSV at end of training ---
+        import csv
+        csv_path = self.outdir / "metrics.csv"
+        with open(csv_path, "w", newline="") as csvfile:
+            fieldnames = [
+                "epoch",
+                "train_loss", "train_loss_decorr", "train_acc", "train_pred1_ratio",
+                "val_loss", "val_loss_decorr", "val_acc", "val_pred1_ratio",
+                "lr",
+            ]
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in per_epoch_metrics:
+                writer.writerow(row)
+        logger.info(f"Saved per-epoch metrics to {csv_path}")
 
         if tb_writer is not None:
+            _save_visuals(visual_datasets, tb_writer, epoch=i, save_features=True)
             for tbw in tb_writer.values():
                 tbw.close()
+
+        # The essential fix: return per-epoch metrics!
+        return per_epoch_metrics
 
     def validate(self,
                  loader_val,
@@ -730,17 +608,14 @@ class TimeArrowNet(nn.Module):
                  visual_dataset_frequency,
                  tensorboard
                  ):
-        """
-        Validate a model
-        """
         criterion = torch.nn.CrossEntropyLoss(reduction="none")
         criterion_decorr = DecorrelationLoss()
 
         def _save_visuals(
                 dataset: Sequence[Dataset], tb_writer, epoch: int, save_features=False
         ):
-            n_insets = 8 # TODO: this controls how many examples will be shown in the vis, default: 8
-            inset_size = 24 #48
+            n_insets = 8
+            inset_size = 24
 
             for i, data in enumerate(dataset):
                 vis = create_visuals(
@@ -794,7 +669,7 @@ class TimeArrowNet(nn.Module):
 
                 for x, y in pbar:
                     x, y = x.to(self.device), y.to(self.device)
-                    out, pro = self(x, mode="both") # ??? TODO
+                    out, pro = self(x, mode="both")
 
                     if out.ndim > 2:
                         y = torch.broadcast_to(
@@ -813,11 +688,8 @@ class TimeArrowNet(nn.Module):
 
                     loss = torch.mean(loss)
 
-                    # decorrelation loss
                     pro_batched = pro.flatten(0, 1)
                     loss_decorr = criterion_decorr(pro_batched)
-
-                    # loss_all = loss + lambda_decorrelation * loss_decorr
 
                     sum_preds += pred.sum().item()
 
@@ -835,7 +707,6 @@ class TimeArrowNet(nn.Module):
                 loss_decorr=losses_decorr / count,
                 accuracy=accs / count,
                 pred1_ratio=sum_preds / count
-                #lr=scheduler.optimizer.param_groups[0]["lr"],
             )
             logger.info(
                 f"{title} ({int(now() - start):3}s) Loss: {metrics['loss']:.5f} Decorr: {metrics['loss_decorr']:.5f} ACC: {metrics['accuracy']:.5f}"
@@ -869,10 +740,6 @@ class TimeArrowNet(nn.Module):
                 metrics[phase][k].append(v)
             metrics[phase]["steps"].append((0 + 1) * len(loader))
 
-        # if self.outdir is not None:
-        #     if visual_dataset_frequency > 0:
-        #         _save_visuals(visual_datasets, tb_writer, epoch=0)
-
         with open(self.outdir / "losses.json", "wt") as f:
             json.dump(metrics, f)
 
@@ -884,32 +751,16 @@ class TimeArrowNet(nn.Module):
             for tbw in tb_writer.values():
                 tbw.flush()
 
-        # if i % save_checkpoint_every == 0:
-        #     logger.info(f"Saving checkpoint: epoch = {i}")
-        #     self.save(
-        #         prefix=f"epoch_{i:05d}",
-        #         which="state",
-        #         outdir=self.outdir / "checkpoints",
-        #     )
+        checkpoint_dir = self.outdir / "checkpoints"
+        checkpoint_dir.mkdir(exist_ok=True, parents=True)
 
         logger.info(f"Saving checkpoint: epoch = {0}")
         self.save(
             prefix=f"epoch_{0:05d}",
             which="state",
-            outdir=self.outdir / "checkpoints",
+            outdir=checkpoint_dir,
         )
-
-        # target = metrics["val"]["loss"]
-        # if np.argmin(target) + 1 == i:
-        #     logger.info(f"Saving best model: epoch = {i} val_loss = {target[-1]}")
-        #     self.save(which="both", exist_ok=True)
-
-        # if tb_writer is not None:
-        #     _save_visuals(visual_datasets, tb_writer, epoch=0, save_features=True)
 
         if tb_writer is not None:
             for tbw in tb_writer.values():
                 tbw.close()
-
-
-
