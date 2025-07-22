@@ -9,7 +9,6 @@ Cangxiong Chen, Guillermo Comesaña Cimadevila, Vinay P. Namboodiri, Julia E. Se
 
 ```bash
 git clone https://github.com/guillermocomesanacimadevila/Synergy_project.git
-cd Synergy_project
 ```
 
 ```bash
