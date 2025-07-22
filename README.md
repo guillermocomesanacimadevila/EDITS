@@ -12,6 +12,10 @@ git clone https://github.com/guillermocomesanacimadevila/Synergy_project.git
 cd Synergy_project
 ```
 
+```bash
+cd ~/Synergy_project && bash run_tap_conda.sh
+```
+
 ### Test configuration example
 --model_id resnet_head_2024-09-10-2359 --crops_per_image 1000 
 --balanced_sample_size 500000 --size 48 --batchsize 108 
