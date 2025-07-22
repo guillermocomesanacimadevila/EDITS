@@ -17,6 +17,24 @@ NC='\033[0m' # No Color
 export LC_ALL=C.UTF-8
 export LANG=C.UTF-8
 
+# ───────────── Auto-Open HTML Report Helper ───────────── #
+open_html_report() {
+  local html_path="$1"
+  if [ -f "$html_path" ]; then
+    if command -v xdg-open &> /dev/null; then
+      xdg-open "$html_path"
+    elif command -v open &> /dev/null; then
+      open "$html_path"
+    elif command -v cygstart &> /dev/null; then
+      cygstart "$html_path"
+    else
+      echo -e "${YELLOW}⚠️  Could not auto-open HTML report. Please open manually:${NC} file://$html_path"
+    fi
+  else
+    echo -e "${RED}❌ HTML report not found: $html_path${NC}"
+  fi
+}
+
 # ───────────── Help Option ───────────── #
 if [[ "$1" == "--help" || "$1" == "-h" ]]; then
     echo -e "${YELLOW}CELLFLOW PIPELINE${NC}"
@@ -39,7 +57,7 @@ for cmd in "${REQUIRED_COMMANDS[@]}"; do
   fi
 done
 
-# Check if /usr/bin/time is available, install if possible (Linux with apt)
+# ───────────── Check if /usr/bin/time is available, install if possible ───────────── #
 if ! command -v /usr/bin/time &> /dev/null; then
   echo -e "${YELLOW}⚠️ /usr/bin/time not found.${NC}"
   OS_TYPE="$(uname)"
@@ -85,22 +103,18 @@ ENV_YML="environment.yml"
 
 if ! command -v conda &> /dev/null; then
     echo -e "${YELLOW}🔄 Conda not found. Installing Miniconda...${NC}"
-
     if ! command -v wget &> /dev/null; then
       echo -e "${RED}❌ wget not found. Cannot download Miniconda.${NC}"
       exit 1
     fi
-
     wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh
     bash miniconda.sh -b -p "$HOME/miniconda"
     export PATH="$HOME/miniconda/bin:$PATH"
     source "$HOME/miniconda/etc/profile.d/conda.sh"
-
     if ! command -v conda &> /dev/null; then
       echo -e "${RED}❌ Miniconda installation failed or PATH not updated.${NC}"
       exit 1
     fi
-
     echo -e "${GREEN}✅ Miniconda installed.${NC}"
 else
     eval "$(conda shell.bash hook)"
@@ -149,6 +163,16 @@ echo "font.family: sans-serif
 font.sans-serif: DejaVu Sans
 " > ~/.config/matplotlib/matplotlibrc
 
+# --- Fix matplotlib cache directory permissions for all users ---
+mkdir -p ~/.cache/matplotlib
+chmod 700 ~/.cache/matplotlib
+
+# --- Preflight check for critical Python packages (fail early if broken env) ---
+python3 -c "import torch, numpy, matplotlib" 2>/dev/null || {
+  echo -e "${RED}❌ Required Python packages missing (torch, numpy, matplotlib). Check your Conda env!${NC}"
+  exit 1
+}
+
 # ───────────── TAP/tarrow install (editable mode) ───────────── #
 echo -e "${YELLOW}🔗 Installing TAP/tarrow package in editable mode (if not already)...${NC}"
 if [ -d "TAP/tarrow" ] && [ -f "TAP/tarrow/setup.py" ]; then
@@ -173,7 +197,6 @@ echo "----------------------------"
 if ! command -v fzf &> /dev/null; then
     echo -e "${YELLOW}⚙️  fzf not found. Installing it for better file selection...${NC}"
     OS_TYPE="$(uname)"
-
     if [[ "$OS_TYPE" == "Darwin" ]]; then
         if command -v brew &> /dev/null; then
             echo -e "${BLUE}➡️  Using Homebrew to install fzf (macOS)...${NC}"
@@ -195,7 +218,6 @@ if ! command -v fzf &> /dev/null; then
         echo -e "${RED}❌ Unsupported OS: $OS_TYPE. Install fzf manually.${NC}"
         exit 1
     fi
-
     echo -e "${GREEN}✅ fzf installed successfully.${NC}"
 fi
 
@@ -206,7 +228,6 @@ select_file() {
     local prompt="$1"
     local start_dir="$2"
     local file
-
     if command -v fzf &> /dev/null; then
         file=$(find "$start_dir" -type f -name "*.tif" | fzf --prompt="$prompt " --height=15 --border)
         if [ -z "$file" ]; then
@@ -234,7 +255,6 @@ select_dir() {
     local prompt="$1"
     local start_dir="$2"
     local dir
-
     if command -v fzf &> /dev/null; then
         dir=$(find "$start_dir" -type d | fzf --prompt="$prompt " --height=15 --border)
         if [ -z "$dir" ]; then
@@ -268,33 +288,25 @@ run_and_log() {
   shift 4
   local CMD=("$@")
   local START END ELAPSED_SEC
-
   local PEAK_RAM_MB="NA"
   if command -v /usr/bin/time &> /dev/null; then
     /usr/bin/time -v "${CMD[@]}" 2> "$LOG"
-    # Grab elapsed time string, should be hh:mm:ss or mm:ss or just s
     local ELAPSED=$(grep "Elapsed (wall clock) time" "$LOG" | awk '{print $8}')
-    # Defensive parse: always provide 0 for empty fields!
     local h=0 m=0 s=0
     if [[ "$ELAPSED" == *:*:* ]]; then
-        # hh:mm:ss
         IFS=: read -r h m s <<< "$ELAPSED"
     elif [[ "$ELAPSED" == *:* ]]; then
-        # mm:ss
         IFS=: read -r m s <<< "$ELAPSED"
         h=0
     elif [[ -n "$ELAPSED" ]]; then
-        # just seconds
         s="$ELAPSED"
         h=0
         m=0
     fi
-    # Remove leading zeroes, default all to zero if blank
     h=${h:-0}; m=${m:-0}; s=${s:-0}
     h=$(echo "$h" | sed 's/^0*//'); h=${h:-0}
     m=$(echo "$m" | sed 's/^0*//'); m=${m:-0}
     s=$(echo "$s" | sed 's/^0*//'); s=${s:-0}
-    # If there's a decimal in s, strip it for int math
     s=${s%%.*}
     ELAPSED_SEC=$((10#$h*3600 + 10#$m*60 + 10#$s))
     PEAK_RAM_MB=$(grep "Maximum resident set size" "$LOG" | awk '{print int($6/1024)}')
@@ -304,9 +316,7 @@ run_and_log() {
     "${CMD[@]}"
     END=$(date +%s)
     ELAPSED_SEC=$((END - START))
-    # No RAM metrics in fallback mode
   fi
-
   local DISK_MB=$(du -sm "$DISK_DIR" 2>/dev/null | awk '{print $1}')
   echo "$STEP,$ELAPSED_SEC,$PEAK_RAM_MB,$DISK_MB" >> "$CSV_FILE"
 }
@@ -338,12 +348,17 @@ fi
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
 if [ "$VAL_BATCH" == "0" ]; then
+
+    # ──────────────────────────────────────────────────────────────── #
+    #                  SINGLE MOVIE PIPELINE (FULL)                   #
+    # ──────────────────────────────────────────────────────────────── #
+
     INPUT_VAL=$(select_file "🧪 Select VALIDATION movie (.tif)" "Data/")
     INPUT_MASK=$(select_file "🎭 Select ANNOTATED MASK (.tif)" "Data/")
     read -p "$(center_text '📐 Crop size (e.g., 48):')" CROP_SIZE
     read -p "$(center_text '🔬 Pixel resolution (e.g., 0.65):')" PIXEL_RES
     read -p "$(center_text '🔁 Number of training epochs:')" EPOCHS
-    read -p "$(center_text '🔂 Number of independent runs (e.g., 1 or 5):')" NUM_RUNS
+    read -p "$(center_text '🔂 Number of independent runs (fine-tune only, e.g., 1 or 5):')" NUM_RUNS
     read -p "$(center_text '📂 Output directory path (e.g., Data/toy_data):')" OUTDIR
     read -p "$(center_text '🎲 Random seed:')" SEED
     read -p "$(center_text '🧠 Backbone (unet, spectformer-xs):')" BACKBONE
@@ -368,10 +383,9 @@ if [ "$VAL_BATCH" == "0" ]; then
       exit 1
     fi
 
-    METRICS_LIST=()
+    FT_RUNS=()
     for RUN_IDX in $(seq 1 $NUM_RUNS); do
         RUN_SEED=$SEED
-
         RUN_ID="${TIMESTAMP}_run${RUN_IDX}"
         MODEL_ID="$(basename "$INPUT_TRAIN" .tif)_${BACKBONE}_${RUN_ID}"
         MODEL_RUN_DIR="runs/${MODEL_ID}"
@@ -417,118 +431,150 @@ EOL
 
         center_text "${GREEN}📝 Configuration saved to $CONFIG_FILE${NC}"
 
-        LOGFILE="$CURR_OUTDIR/pipeline_log.txt"
-        METRICS_CSV="$CURR_OUTDIR/pipeline_metrics.csv"
+        LOGFILE="$CURR_OUTDIR/finetune_log.txt"
+        METRICS_CSV="$CURR_OUTDIR/finetune_metrics.csv"
         echo "step_name,elapsed_sec,peak_ram_mb,disk_after_mb" > "$METRICS_CSV"
         exec > >(tee -i "$LOGFILE")
         exec 2>&1
 
-        START_TIME=$(date +%s)
-
         STEP_LOG="$CURR_OUTDIR/01_finetune_timing.log"
-        center_text "${YELLOW}🚀 Training Model (Fine-tuning)${NC}"
+        center_text "${YELLOW}🚀 Fine-tune Model (Run $RUN_IDX of $NUM_RUNS)${NC}"
         run_and_log "Fine-tune" "$STEP_LOG" "$CURR_OUTDIR" "$METRICS_CSV" python3 Workflow/01_fine-tune.py --config "$CONFIG_FILE"
 
-        STEP_LOG="$CURR_OUTDIR/02_dataprep_timing.log"
-        center_text "${YELLOW}🚀 Data Preparation${NC}"
-        run_and_log "Data Preparation" "$STEP_LOG" "$CURR_OUTDIR" "$METRICS_CSV" python3 Workflow/02_data_prep.py \
-            --input_frame "$INPUT_VAL" \
-            --input_mask "$INPUT_MASK" \
-            --data_save_dir "$CURR_OUTDIR" \
-            --size "$CROP_SIZE" \
-            --binarize \
-            --min_pixels "$MIN_PIXELS" \
-            --data_seed "$RUN_SEED"
-
-        TAP_MODEL_DIR="${MODEL_RUN_DIR}/${MODEL_ID}_backbone_${BACKBONE}"
-        echo "TAP model folder: $TAP_MODEL_DIR"
-        ls -lh "$TAP_MODEL_DIR"
-
-        STEP_LOG="$CURR_OUTDIR/03_classification_timing.log"
-        center_text "${YELLOW}🚀 Event Classification${NC}"
-        run_and_log "Event Classification" "$STEP_LOG" "$CURR_OUTDIR" "$METRICS_CSV" python3 Workflow/03_event_classification.py \
-            --input_frame "$INPUT_VAL" \
-            --input_mask "$INPUT_MASK" \
-            --cam_size 960 \
-            --size "$CROP_SIZE" \
-            --batchsize 108 \
-            --training_epochs "$EPOCHS" \
-            --balanced_sample_size 50000 \
-            --crops_per_image 108 \
-            --model_seed "$RUN_SEED" \
-            --data_seed "$RUN_SEED" \
-            --data_save_dir "$CURR_OUTDIR" \
-            --num_runs 1 \
-            --model_save_dir "$MODEL_RUN_DIR" \
-            --model_id "$MODEL_ID" \
-            --cls_head_arch linear \
-            --backbone "$BACKBONE" \
-            --name "$MODEL_ID" \
-            --binarize false \
-            --TAP_model_load_path "$TAP_MODEL_DIR"
-
-        STEP_LOG="$CURR_OUTDIR/04_mistake_analysis_timing.log"
-        center_text "${YELLOW}🚀 Examining Mistaken Predictions${NC}"
-        run_and_log "Mistake Analysis" "$STEP_LOG" "$CURR_OUTDIR" "$METRICS_CSV" python3 Workflow/04_examine_mistaken_predictions.py \
-            --mistake_pred_dir "$MODEL_RUN_DIR" \
-            --masks_path "$INPUT_MASK" \
-            --TAP_model_load_path "$TAP_MODEL_DIR" \
-            --patch_size "$CROP_SIZE" \
-            --test_data_load_path "$CURR_OUTDIR/test_data_crops_flat.pth" \
-            --combined_model_load_dir "$MODEL_RUN_DIR" \
-            --model_id "$MODEL_ID" \
-            --cls_head_arch linear \
-            --num_egs_to_show 10 \
-            --save_data
-
-        END_TIME=$(date +%s)
-        RUNTIME=$((END_TIME - START_TIME))
-
-        center_text "${GREEN}🎉 CELLFLOW Pipeline Run #$RUN_IDX Complete!${NC}"
-        echo -e "${GREEN}───────────────────────────────────────────────────────────────${NC}"
-        echo "🔹 Model ID      : $MODEL_ID"
-        echo "🔹 Model Dir     : $MODEL_RUN_DIR"
-        echo "🔹 Output Dir    : $CURR_OUTDIR"
-        echo "🔹 Crop Size     : $CROP_SIZE"
-        echo "🔹 Epochs        : $EPOCHS"
-        echo "🔹 Pixel Res     : $PIXEL_RES"
-        echo "🔹 Backbone      : $BACKBONE"
-        echo "🔹 Mask File     : $INPUT_MASK"
-        echo "🔹 Config File   : $CONFIG_FILE"
-        echo "🔹 Log File      : $LOGFILE"
-        echo "🔹 Metrics CSV   : $METRICS_CSV"
-        echo "⏱️  Runtime: $((RUNTIME / 60)) min $((RUNTIME % 60)) sec"
-        echo -e "${GREEN}───────────────────────────────────────────────────────────────${NC}"
-
-        center_text "${YELLOW}📝 Generating HTML Report${NC}"
-        python3 Workflow/05_generate_report.py --config "$CONFIG_FILE" --outdir "$CURR_OUTDIR"
-
-        echo -e "${BLUE}─────────────────────────────────────────────${NC}"
-        echo -e "${GREEN}🎯 CELLFLOW RUN #$RUN_IDX RESULTS SUMMARY${NC}"
-        echo -e "${BLUE}─────────────────────────────────────────────${NC}"
-        echo -e "${YELLOW}🔸 Output directory    :${NC} $CURR_OUTDIR"
-        echo -e "${YELLOW}🔸 Figures directory   :${NC} $CURR_OUTDIR/figures"
-        echo -e "${YELLOW}🔸 Log file           :${NC} $LOGFILE"
-        echo -e "${YELLOW}🔸 Config file        :${NC} $CONFIG_FILE"
-        echo -e "${YELLOW}🔸 HTML report        :${NC} $CURR_OUTDIR/report.html"
-        echo -e "${YELLOW}🔸 Metrics CSV        :${NC} $METRICS_CSV"
-        echo -e "${BLUE}─────────────────────────────────────────────${NC}"
-        echo -e "${GREEN}Open your report in your browser:${NC} file://$CURR_OUTDIR/report.html"
-
-        # Collect metrics for shadow plot
-        METRICS_LIST+=("$METRICS_CSV")
+        FT_RUNS+=("$CURR_OUTDIR")
+        center_text "${GREEN}✔️ Fine-tune #$RUN_IDX complete! Results in $CURR_OUTDIR${NC}"
+        echo -e "${YELLOW}---------------------------------------------${NC}"
     done
 
-    if [ "$NUM_RUNS" -gt 1 ]; then
-        echo
-        echo -e "${YELLOW}You performed $NUM_RUNS runs. Generate summary shadow plots (mean ± std) over runs?${NC}"
-        read -p "Generate shadow plots and summary figures [y/N]? " GENSHADOW
-        if [[ "$GENSHADOW" =~ ^[Yy]$ ]]; then
-            SUMMARY_OUTDIR="${OUTDIR%/}_summary_shadow"
-            echo -e "${YELLOW}Generating shadow plots and metrics summary in $SUMMARY_OUTDIR ...${NC}"
-            python3 Workflow/01_fine-tune.py --metrics_csv_list "${METRICS_LIST[@]}" --outdir "$SUMMARY_OUTDIR"
-            echo -e "${GREEN}Summary shadow plots and mean/STD results saved in $SUMMARY_OUTDIR${NC}"
+    # Prompt user to pick which fine-tune result to use for the rest of the pipeline
+    echo -e "${BLUE}\nAvailable fine-tuned runs:${NC}"
+    select SELECTED_DIR in "${FT_RUNS[@]}"; do
+        if [[ -n "$SELECTED_DIR" && -d "$SELECTED_DIR" ]]; then
+            break
         fi
+        echo -e "${RED}Invalid selection. Choose a number from the list above.${NC}"
+    done
+
+    CONFIG_FILE="$SELECTED_DIR/run_config.yaml"
+    MODEL_RUN_DIR=$(grep '^outdir:' "$CONFIG_FILE" | awk '{print $2}' | tr -d '"')
+    MODEL_ID=$(grep '^name:' "$CONFIG_FILE" | awk '{print $2}')
+    TAP_MODEL_DIR="${MODEL_RUN_DIR}/${MODEL_ID}_backbone_${BACKBONE}"
+    METRICS_CSV="$SELECTED_DIR/pipeline_metrics.csv"
+    LOGFILE="$SELECTED_DIR/pipeline_log.txt"
+    INPUT_MASK="$INPUT_MASK"
+    INPUT_VAL="$INPUT_VAL"
+    CROP_SIZE="$CROP_SIZE"
+
+    exec > >(tee -i "$LOGFILE")
+    exec 2>&1
+    echo "step_name,elapsed_sec,peak_ram_mb,disk_after_mb" > "$METRICS_CSV"
+    START_TIME=$(date +%s)
+
+    STEP_LOG="$SELECTED_DIR/02_dataprep_timing.log"
+    center_text "${YELLOW}🚀 Data Preparation${NC}"
+    run_and_log "Data Preparation" "$STEP_LOG" "$SELECTED_DIR" "$METRICS_CSV" python3 Workflow/02_data_prep.py \
+        --input_frame "$INPUT_VAL" \
+        --input_mask "$INPUT_MASK" \
+        --data_save_dir "$SELECTED_DIR" \
+        --size "$CROP_SIZE" \
+        --binarize \
+        --min_pixels "$MIN_PIXELS" \
+        --data_seed "$SEED"
+
+    echo "TAP model folder: $TAP_MODEL_DIR"
+    ls -lh "$TAP_MODEL_DIR"
+
+    STEP_LOG="$SELECTED_DIR/03_classification_timing.log"
+    center_text "${YELLOW}🚀 Event Classification${NC}"
+    run_and_log "Event Classification" "$STEP_LOG" "$SELECTED_DIR" "$METRICS_CSV" python3 Workflow/03_event_classification.py \
+        --input_frame "$INPUT_VAL" \
+        --input_mask "$INPUT_MASK" \
+        --cam_size 960 \
+        --size "$CROP_SIZE" \
+        --batchsize 108 \
+        --training_epochs "$EPOCHS" \
+        --balanced_sample_size 50000 \
+        --crops_per_image 108 \
+        --model_seed "$SEED" \
+        --data_seed "$SEED" \
+        --data_save_dir "$SELECTED_DIR" \
+        --num_runs 1 \
+        --model_save_dir "$MODEL_RUN_DIR" \
+        --model_id "$MODEL_ID" \
+        --cls_head_arch linear \
+        --backbone "$BACKBONE" \
+        --name "$MODEL_ID" \
+        --binarize false \
+        --TAP_model_load_path "$TAP_MODEL_DIR"
+
+    STEP_LOG="$SELECTED_DIR/04_mistake_analysis_timing.log"
+    center_text "${YELLOW}🚀 Examining Mistaken Predictions${NC}"
+    run_and_log "Mistake Analysis" "$STEP_LOG" "$SELECTED_DIR" "$METRICS_CSV" python3 Workflow/04_examine_mistaken_predictions.py \
+        --mistake_pred_dir "$MODEL_RUN_DIR" \
+        --masks_path "$INPUT_MASK" \
+        --TAP_model_load_path "$TAP_MODEL_DIR" \
+        --patch_size "$CROP_SIZE" \
+        --test_data_load_path "$SELECTED_DIR/test_data_crops_flat.pth" \
+        --combined_model_load_dir "$MODEL_RUN_DIR" \
+        --model_id "$MODEL_ID" \
+        --cls_head_arch linear \
+        --num_egs_to_show 10 \
+        --save_data
+
+    END_TIME=$(date +%s)
+    RUNTIME=$((END_TIME - START_TIME))
+
+    center_text "${GREEN}🎉 CELLFLOW Pipeline Complete for Selected Run!${NC}"
+    echo -e "${GREEN}───────────────────────────────────────────────────────────────${NC}"
+    echo "🔹 Model ID      : $MODEL_ID"
+    echo "🔹 Model Dir     : $MODEL_RUN_DIR"
+    echo "🔹 Output Dir    : $SELECTED_DIR"
+    echo "🔹 Crop Size     : $CROP_SIZE"
+    echo "🔹 Epochs        : $EPOCHS"
+    echo "🔹 Pixel Res     : $PIXEL_RES"
+    echo "🔹 Backbone      : $BACKBONE"
+    echo "🔹 Mask File     : $INPUT_MASK"
+    echo "🔹 Config File   : $CONFIG_FILE"
+    echo "🔹 Log File      : $LOGFILE"
+    echo "🔹 Metrics CSV   : $METRICS_CSV"
+    echo "⏱️  Runtime: $((RUNTIME / 60)) min $((RUNTIME % 60)) sec"
+    echo -e "${GREEN}───────────────────────────────────────────────────────────────${NC}"
+
+    center_text "${YELLOW}📝 Generating HTML Report${NC}"
+    python3 Workflow/05_generate_report.py --config "$CONFIG_FILE" --outdir "$SELECTED_DIR"
+
+    # ---- Auto-Open HTML report ----
+    echo -e "${GREEN}Attempting to open your report in your browser...${NC}"
+    open_html_report "$SELECTED_DIR/report.html"
+
+    echo -e "${BLUE}─────────────────────────────────────────────${NC}"
+    echo -e "${GREEN}🎯 CELLFLOW FINAL RESULTS SUMMARY${NC}"
+    echo -e "${BLUE}─────────────────────────────────────────────${NC}"
+    echo -e "${YELLOW}🔸 Output directory    :${NC} $SELECTED_DIR"
+    echo -e "${YELLOW}🔸 Figures directory   :${NC} $SELECTED_DIR/figures"
+    echo -e "${YELLOW}🔸 Log file           :${NC} $LOGFILE"
+    echo -e "${YELLOW}🔸 Config file        :${NC} $CONFIG_FILE"
+    echo -e "${YELLOW}🔸 HTML report        :${NC} $SELECTED_DIR/report.html"
+    echo -e "${YELLOW}🔸 Metrics CSV        :${NC} $METRICS_CSV"
+    echo -e "${BLUE}─────────────────────────────────────────────${NC}"
+    echo -e "${GREEN}Open your report in your browser:${NC} file://$SELECTED_DIR/report.html"
+
+    # ======= AUTOMATIC SHADOW SUMMARY PLOT (FULLY INTEGRATED) =======
+    METRICS_LIST=()
+    for RUN_DIR in "${FT_RUNS[@]}"; do
+      MET_CSV="$RUN_DIR/metrics.csv"
+      if [ -f "$MET_CSV" ]; then
+        if head -1 "$MET_CSV" | grep -q "epoch"; then
+          METRICS_LIST+=("$MET_CSV")
+        fi
+      fi
+    done
+
+    if [ "${#METRICS_LIST[@]}" -gt 1 ]; then
+        SUMMARY_OUTDIR="${OUTDIR%/}_summary_shadow"
+        echo -e "${YELLOW}Generating shadow plots and metrics summary in $SUMMARY_OUTDIR ...${NC}"
+        python3 Workflow/01_fine-tune.py --metrics_csv_list "${METRICS_LIST[@]}" --outdir "$SUMMARY_OUTDIR"
+        echo -e "${GREEN}Summary shadow plots and mean/STD results saved in $SUMMARY_OUTDIR${NC}"
     fi
 
 else
@@ -536,6 +582,7 @@ else
     # ──────────────────────────────────────────────────────────────── #
     #               BATCH VALIDATION (TAP ONLY) MODE                  #
     # ──────────────────────────────────────────────────────────────── #
+
     VAL_DIR=$(select_dir "📂 Select directory with validation .tif files" "Data/")
     read -p "$(center_text '📐 Crop size (e.g., 48):')" CROP_SIZE
     read -p "$(center_text '🔬 Pixel resolution (e.g., 0.65):')" PIXEL_RES
