@@ -1,4 +1,5 @@
 # 02_data_prep.py
+
 import os
 import sys
 import numpy as np
@@ -24,7 +25,6 @@ from torch.utils.data import ConcatDataset, Dataset
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-# --- RECURSIVE YAML-SAFE FUNCTION ---
 def make_yaml_safe(obj):
     """Recursively convert any non-primitive object to string for YAML safety."""
     if isinstance(obj, (str, int, float, bool, type(None))):
@@ -36,7 +36,6 @@ def make_yaml_safe(obj):
     else:
         return str(obj)
 
-# Save full config + metadata for reproducibility
 def save_config_metadata(args, output_dir):
     metadata = {
         "timestamp": str(datetime.now().isoformat()),
@@ -51,9 +50,7 @@ def save_config_metadata(args, output_dir):
     except Exception:
         metadata["git_commit"] = "unknown"
     config_path = Path(output_dir) / "preprocessing_config.yaml"
-
     yaml_ready = make_yaml_safe({**vars(args), **metadata})
-
     with open(config_path, "w") as f:
         yaml.safe_dump(yaml_ready, f)
     print(f"Saved config to {config_path}")
@@ -86,7 +83,7 @@ class CellEventDataset(Dataset):
             split_end=1,
             n_images=None,
             n_frames=2,
-            delta_frames=[1], # TODO: can we reformat this input to be an integer rather a list?
+            delta_frames=[1],
             subsample=1,
             size=None,
             mode="flip",
@@ -99,7 +96,7 @@ class CellEventDataset(Dataset):
             random_crop=True,
             reject_background=False,
             crops_per_image=1,
-            pixel_area_threshold=-1
+            min_pixels=10
     ):
         super().__init__()
         import numpy as np
@@ -124,7 +121,7 @@ class CellEventDataset(Dataset):
         if self._augmenter is not None:
             self._augmenter.to(device)
         self._crops_per_image = crops_per_image
-        self._pixel_area_threshold = pixel_area_threshold
+        self._min_pixels = min_pixels
 
         # Read and process imgs
         if isinstance(imgs, (str, Path)):
@@ -181,7 +178,6 @@ class CellEventDataset(Dataset):
             print(f"New mask shape: {masks.shape}")
 
         # --- CRITICAL BINARIZATION FIX (always binarize mask!) ---
-        # Now any mask with values [0,255], [0,1], [0,2] becomes just 0 and 1
         masks = (masks > 0).astype(np.uint8)
 
         imgs = torch.as_tensor(imgs)
@@ -215,7 +211,7 @@ class CellEventDataset(Dataset):
         else:
             self._crop = transforms.CenterCrop(self._size)
 
-        if imgs.ndim != 4:  # T, C, X, Y
+        if imgs.ndim != 4:
             raise NotImplementedError(
                 f"only 2D timelapses supported (total image shape: {imgs.shape})"
             )
@@ -351,19 +347,17 @@ class CellEventDataset(Dataset):
 
     def mask_to_label(self, mask_input, binary_problem=True):
         """
-        This version is robust: any nonzero pixel means "event".
+        This version is robust: any nonzero pixel means "event" if there are at least min_pixels present.
         """
         if binary_problem:
-            # Consider any positive value (==1, because we binarized) as an event
             if torch.any(mask_input > 0):
-                if torch.sum(mask_input).item() > self._pixel_area_threshold:
+                if torch.sum(mask_input).item() > self._min_pixels:
                     output_label = 1
                 else:
                     output_label = 0
             else:
                 output_label = 0
         else:
-            # Not used, but keep compatible for multiclass
             if torch.any(mask_input == torch.tensor(1)):
                 output_label = 1
             elif torch.any(mask_input == torch.tensor(2)):
@@ -432,7 +426,6 @@ class CellEventDataset(Dataset):
         sample = [tuple(self.generate_one_datapoint(idx)) for i in range(self._crops_per_image)]
         return sample, total_event_count
 
-
 def _build_dataset(
         imgs,
         masks,
@@ -446,7 +439,7 @@ def _build_dataset(
         random_crop=True,
         reject_background=False,
         crops_per_image=1,
-        pixel_area_threshold=-1
+        min_pixels=10
 ):
     return CellEventDataset(
         imgs=imgs,
@@ -462,32 +455,21 @@ def _build_dataset(
         permute=permute,
         augmenter=augmenter,
         device="cpu",
-        channels=0, #args.channels,
+        channels=0,
         binarize=args.binarize,
         random_crop=random_crop,
         reject_background=reject_background,
         crops_per_image=crops_per_image,
-        pixel_area_threshold=pixel_area_threshold
+        min_pixels=min_pixels
     )
 
 def flatten_data(input_data, crops_per_image):
-    """
-    Return the flattened input data as a list where each element of the 'input_data' is of the form:
-    (sample, total_event_count)
-    where sample = [(x_crop, event_label, label, crop_coordinates), ... ]
-    crop_coordinates = (i, j, idx, label)
-    idx: time index of the frame where the crop is taken
-    :param input_data:
-    :param crops_per_image:
-    :return:
-    """
     flat_data = []
     for i in range(len(input_data)):
         for j in range(crops_per_image):
             flat_data.append((input_data[i][0][j]))
     return flat_data
 
-# ---- This is the only new code block you needed to add! ----
 def get_argparser():
     parser = configargparse.ArgumentParser()
     parser.add_argument("--input_frame", type=str, required=True)
@@ -496,20 +478,18 @@ def get_argparser():
     parser.add_argument("--size", type=int, default=48)
     parser.add_argument("--ndim", type=int, default=2)
     parser.add_argument("--frames", type=int, default=2)
-    parser.add_argument("--pixel_area_threshold", type=int, default=-1)
+    parser.add_argument("--min_pixels", type=int, default=10, help="Minimum number of positive pixels for a crop to be counted as an event. User-tunable for classifier.")
     parser.add_argument("--crops_per_image", type=int, default=1)
     parser.add_argument("--subsample", type=int, default=1)
     parser.add_argument("--binarize", action="store_true")
     parser.add_argument("--data_seed", type=int, default=42)
     parser.add_argument("--n_images", type=int, default=None)
     return parser
-# ---- end of get_argparser ----
 
 def main():
     parser = get_argparser()
     args = parser.parse_args()
 
-    # Validate required fields manually
     if not args.input_frame:
         raise ValueError("Missing required field: input_frame (use CLI or YAML).")
     if not args.input_mask:
@@ -517,7 +497,6 @@ def main():
     if not args.data_save_dir:
         raise ValueError("Missing required field: data_save_dir (use CLI or YAML).")
 
-    # Path validation
     if not Path(args.input_frame).exists():
         raise FileNotFoundError(f"Input frame path not found: {args.input_frame}")
     if not Path(args.input_mask).exists():
@@ -540,7 +519,7 @@ def main():
                 n_frames=args.frames,
                 delta_frames=time_delta,
                 crops_per_image=args.crops_per_image,
-                pixel_area_threshold=args.pixel_area_threshold
+                min_pixels=args.min_pixels
             )
             for inp, mask in zip(inputs_frame, inputs_mask)
         )
