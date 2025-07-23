@@ -1,8 +1,9 @@
 # 03_event_classification.py
 
+
 import matplotlib
 matplotlib.use('Agg')  # <--- Fix: Use Agg for headless environments
-
+import csv
 import sys
 import os
 from pathlib import Path
@@ -10,6 +11,7 @@ from datetime import datetime
 import platform
 import yaml
 import git
+import pandas as pd
 import logging
 import configargparse
 import tarrow
@@ -28,6 +30,52 @@ project_root = script_dir.parent
 sys.path.insert(0, str(project_root / "TAP" / "tarrow"))
 sys.path.append(str(project_root / "TAP" / "tarrow" / "tarrow"))
 
+# === NEW: Helper functions for class balance/imbalance metrics ===
+
+def gini_index(labels):
+    p = np.mean(labels)
+    return 2 * p * (1 - p)
+
+def log_normalized_shannon_entropy(labels):
+    ps = np.bincount(labels)
+    ps = ps / ps.sum()
+    ps = ps[ps > 0]
+    entropy = -np.sum(ps * np.log(ps))
+    max_entropy = np.log(len(np.unique(labels)))
+    return entropy / max_entropy if max_entropy > 0 else 0
+
+def imbalance_ratio(labels):
+    n_pos = np.sum(labels > 0)
+    n_neg = np.sum(labels == 0)
+    return n_pos / (n_neg + 1e-8)
+
+def get_class_stats(labels):
+    n_total = len(labels)
+    n_pos = np.sum(labels > 0)
+    n_neg = np.sum(labels == 0)
+    return {
+        "Total crop pairs": n_total,
+        "Positive (class 1)": n_pos,
+        "Negative (class 0)": n_neg,
+        "Imbalance ratio (pos/neg)": imbalance_ratio(labels),
+        "Gini index": gini_index(labels),
+        "Log norm. Shannon entropy": log_normalized_shannon_entropy(labels),
+    }
+
+def print_and_save_stats(name, labels, outdir, tag):
+    stats = get_class_stats(labels)
+    print(f"\n{name}:")
+    for k, v in stats.items():
+        print(f"  {k}: {v:.4f}" if isinstance(v, float) else f"  {k}: {v}")
+    # Save to CSV
+    os.makedirs(outdir, exist_ok=True)
+    csv_path = os.path.join(outdir, f"class_balance_{tag}.csv")
+    with open(csv_path, "w", newline="") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["Metric", "Value"])
+        for k, v in stats.items():
+            writer.writerow([k, v])
+    print(f"Saved class balance stats to {csv_path}")
 
 def save_config_metadata(args, output_dir):
     import collections.abc
@@ -895,7 +943,7 @@ def main():
     p.add_argument("--cam_subsampling", type=int, default=1)
     p.add_argument("--training_epochs", type=int, required=True)
     p.add_argument("--binary_problem", type=bool, default=True)
-    p.add_argument("--balanced_sample_size", required=True, type=int)
+    p.add_argument('--balanced_sample_size', type=int, default=50000, help="Number of balanced samples per class")
     p.add_argument("--crops_per_image", required=True, type=int)
     p.add_argument("--model_seed", required=True, type=int)
     p.add_argument("--data_seed", required=True, type=int)
@@ -940,6 +988,16 @@ def main():
         print("Please check your input data or use a larger dataset.")
         return
 
+    # === PRINT & SAVE CLASS BALANCE METRICS (before balancing) ===
+    vis_outdir = os.path.join(args.data_save_dir, "figures")
+    labels_train_before = np.array([x[1] for x in train_data_crops_flat])
+    labels_valid = np.array([x[1] for x in valid_data_crops_flat])
+    labels_test = np.array([x[1] for x in test_data_crops_flat])
+
+    print_and_save_stats("Train BEFORE balancing", labels_train_before, vis_outdir, "train_before_balancing")
+    print_and_save_stats("Validation", labels_valid, vis_outdir, "validation")
+    print_and_save_stats("Test", labels_test, vis_outdir, "test")
+
     estimated_total_event_count = estimate_total_events(image_crops_flat_loaded)
     train_loader = DataLoader(
         train_data_crops_flat,
@@ -964,6 +1022,13 @@ def main():
         drop_last=False,
         persistent_workers=False
     )
+
+    # === PRINT & SAVE CLASS BALANCE METRICS (AFTER balancing) ===
+    sampler = train_loader.sampler
+    indices_balanced = list(sampler.get_combined_samples(args.data_seed))
+    labels_balanced = np.array([train_data_crops_flat[i][1] for i in indices_balanced])
+    print_and_save_stats("Train AFTER balancing", labels_balanced, vis_outdir, "train_after_balancing")
+
     print(f"Estimated event count: {estimated_total_event_count}")
     print(f"Train samples and positives: {count_data_points(train_loader)}")
     print(f"Test samples and positives: {count_data_points(test_loader)}")
@@ -976,7 +1041,6 @@ def main():
         persistent_workers=False
     )
     start_time = time.time()
-    vis_outdir = os.path.join(args.data_save_dir, "figures")
     print(f"[DEBUG] All figures will be saved in: {vis_outdir}")
     (precision_class_0_all, precision_class_1_all,
      recall_class_0_all, recall_class_1_all,
