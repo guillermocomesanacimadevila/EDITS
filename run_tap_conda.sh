@@ -363,6 +363,7 @@ if [ "$VAL_BATCH" == "0" ]; then
     read -p "$(center_text '🎲 Random seed:')" SEED
     read -p "$(center_text '🧠 Backbone (unet, spectformer-xs):')" BACKBONE
     read -p "$(center_text '🔸 Minimum # pixels in event mask to count as event (min_pixels, e.g., 10):')" MIN_PIXELS
+    read -p "$(center_text '🔹 Balanced sample size per class for training (e.g., 50000):')" BALANCED_SAMPLE_SIZE
 
     re_int='^[0-9]+$'
     re_float='^[0-9]+(\.[0-9]+)?$'
@@ -493,7 +494,7 @@ EOL
         --size "$CROP_SIZE" \
         --batchsize 108 \
         --training_epochs "$EPOCHS" \
-        --balanced_sample_size 50000 \
+        --balanced_sample_size "$BALANCED_SAMPLE_SIZE" \
         --crops_per_image 108 \
         --model_seed "$SEED" \
         --data_seed "$SEED" \
