@@ -1,6 +1,9 @@
 # 04_examine_mistaken_predictions.py
 import sys
 import os
+import numpy as np
+import matplotlib.pyplot as plt
+from collections import defaultdict
 from pathlib import Path
 import torch
 import torch.nn as nn
@@ -81,7 +84,6 @@ class SimpleResNet(nn.Module):
         x = self.fc(x)
         return x
 
-
 # class BasicBlock(nn.Module):
 #     def __init__(self, in_channels, out_channels, stride=1):
 #         super(BasicBlock, self).__init__()
@@ -144,7 +146,6 @@ class SimpleResNet(nn.Module):
 #         x = self.fc(x)
 #         return x
 
-
 class ClsHead(nn.Module):
     """
     classification head that takes the dense representation from the TAP model as input,
@@ -165,7 +166,6 @@ class ClsHead(nn.Module):
         x = x.view(x.size(0), -1)
         x = self.fc(x)
         return x
-
 
 def _get_paths_recursive(paths: Sequence[str], level: int):
     input_rec = paths
@@ -258,14 +258,7 @@ def _load(path, split_start, split_end, n_images=None):
 
     return imgs
 
-
 def plot_images_gray_scale(image1=None, image2=None, mask1=None, mask2=None,  save_path=None):
-    """
-    plot image1 and image2 side by side for inspections
-    :param image1: torch tensor
-    :param image2: torch tensor
-    :return:
-    """
     import matplotlib.pyplot as plt
     if image1 is None:
         image1 = torch.zeros((1,96,96), dtype=torch.uint8)
@@ -300,12 +293,7 @@ def plot_images_gray_scale(image1=None, image2=None, mask1=None, mask2=None,  sa
     plt.close()
     # plt.show()
 
-
 def read_data_from_file(input_file_path):
-    """
-    :param input_file_path:
-    :return: a list of numpy arrays
-    """
     import ast  # for safe evaluations
     import numpy as np
 
@@ -329,12 +317,9 @@ def read_data_from_file(input_file_path):
 
     return loaded_data
 
-
 def masks_prep(n_frames, masks_path, delta_frames=1):
-    # read the masks in the same way as the images
     import numpy as np
     inputs_mask = [_get_paths_recursive(masks_path, 0)]
-    # print(f"inputs_mask : {inputs_mask}")
     masks_sequences = []
     for masks in inputs_mask:
         if isinstance(masks, (str, Path)):
@@ -353,7 +338,6 @@ def masks_prep(n_frames, masks_path, delta_frames=1):
                 "Input should be either a path to a sequence of 2d images, a single 2d+time image, or a list of 2d np.ndarrays."
             )
         masks = torch.as_tensor(masks)
-        # print(f"masks : {masks}")
         for delta in [delta_frames]:
             n, k = n_frames, delta
             logger.debug(f"Creating delta {delta} crops")
@@ -362,7 +346,6 @@ def masks_prep(n_frames, masks_path, delta_frames=1):
             )
             _masks_sequence = [(torch.as_tensor(masks[ss])) for ss in tslices]
             masks_sequences.extend(_masks_sequence)
-
     return masks_sequences
 
 def masks_lookup(coord_x, coord_y, patch_size, time_index, imgs_masks_sequences):
@@ -374,7 +357,6 @@ def masks_lookup(coord_x, coord_y, patch_size, time_index, imgs_masks_sequences)
     masks_crops_1 = transforms.functional.crop(x, coord_x, coord_y, patch_size, patch_size)
     masks_crops_2 = transforms.functional.crop(y, coord_x, coord_y, patch_size, patch_size)
     return masks_crops_1, masks_crops_2
-
 
 def probing_mistake_predictions(model, cls_head, test_data_loader, device):
     """
@@ -414,7 +396,6 @@ def probing_mistake_predictions(model, cls_head, test_data_loader, device):
 
     return false_positives, false_negatives, logits_false_pos, logits_false_neg
 
-
 def probing_mistaken_preds(model, test_loader, device, is_true_positive, is_true_negative):
     false_positives = []
     false_negatives = []
@@ -430,18 +411,9 @@ def probing_mistaken_preds(model, test_loader, device, is_true_positive, is_true
     with torch.no_grad():
         for datapoint in test_loader:
             x, y = datapoint[0].to(device), datapoint[1].to(device)
-            # Forward pass through the pre-trained model to get the dense representation
-            # Ensure the pre-trained model is not being updated
             outputs = model(x)
-            # rep = model.embedding(x)
-
-            # Forward pass through the classification head
-            # outputs = cls_head_trained(rep)
             _, predicted = torch.max(outputs, 1)
             datapoint.append(predicted.detach().cpu())
-            # datapoint : (x_crop, event_label, label, crop_coordinates, predicted_event_label)
-            # crop_coordinates = (torch.tensor(i), torch.tensor(j), torch.tensor(idx) (time index of the frame), TAP label)
-
             if (predicted == 1) and (y == 0):
                 # false positive
                 false_positives.append(datapoint)
@@ -458,7 +430,6 @@ def probing_mistaken_preds(model, test_loader, device, is_true_positive, is_true
                     true_negatives.append(datapoint)
                     logits_true_negatives.append(torch.squeeze(outputs.detach().cpu()))
 
-    # false_positives_coordinates: event_label, label, crop_coordinates, predicted_event_label)
     false_positives_coordinates = [tuple(e[1:]) for e in false_positives]
     false_negatives_coordinates = [tuple(e[1:]) for e in false_negatives]
     if is_true_positive:
@@ -474,7 +445,6 @@ def probing_mistaken_preds(model, test_loader, device, is_true_positive, is_true
             true_positives_coordinates, true_positives, logits_true_positives,
             true_negatives_coordinates, true_negatives, logits_true_negatives)
 
-
 def count_data_points(dataloader):
     count = 0
     num_positive_event = 0
@@ -483,7 +453,6 @@ def count_data_points(dataloader):
         count += inputs.size(0)  # Increment by the batch size
         num_positive_event += (event_labels == 1).sum().item()
     return count, num_positive_event
-
 
 def save_output_as_txt(data, output_f_path):
     # Open a file to write the numerical data
@@ -503,7 +472,6 @@ def save_output_as_txt(data, output_f_path):
 
     print(f"Successfully saved to {output_f_path}")
 
-
 class CellEventClassModel(nn.Module):
     def __init__(self, TAPmodel, ClsHead):
         super(CellEventClassModel, self).__init__()
@@ -514,7 +482,6 @@ class CellEventClassModel(nn.Module):
         z = self._TAPmodel.embedding(_input)
         y = self._ClsHead(z)
         return y
-
 
 def plot_mistaken_examples(num_egs_to_show, total_number, example_set, coordinates, imgs_masks_seq, image_outdir):
     for i in range(min(num_egs_to_show, total_number)):
@@ -533,8 +500,6 @@ def plot_mistaken_examples(num_egs_to_show, total_number, example_set, coordinat
             plot_images_gray_scale(image2, image1, mask_2, mask_1,
                                    os.path.join(image_outdir,f'example_{i}.pdf'))
     print(f"Example images saved!")
-
-
 
 def main():
     import argparse
@@ -658,6 +623,50 @@ def main():
         plot_mistaken_examples(args.num_egs_to_show, len(true_negatives_egs), true_negatives_egs,
                               true_negatives_coordinates, imgs_masks_sequences, image_output_dir_true_neg)
 
+    # --- NEW: Compute and plot time distribution of mistaken predictions ---
+    # This block runs always at the end.
+    # It expects 'false_positive_coordinates' and 'false_negative_coordinates' from above.
+
+    class MistakenPredictionTimeDistribution:
+        def __init__(self, fp_coords, fn_coords):
+            self.fp_times = self.extract_times(fp_coords)
+            self.fn_times = self.extract_times(fn_coords)
+
+        @staticmethod
+        def extract_times(coords):
+            # coords: list of tuples, where third element is crop_coordinates, and the third element in there is the frame/time
+            times = []
+            for tup in coords:
+                # Each tup: (event_label, label, crop_coordinates, predicted_event_label)
+                # crop_coordinates = (torch.tensor(i), torch.tensor(j), torch.tensor(idx), ...)
+                crop_coordinates = tup[2]
+                # Accept both torch.tensor and plain int
+                time_val = crop_coordinates[2]
+                if isinstance(time_val, torch.Tensor):
+                    times.append(time_val.item())
+                else:
+                    times.append(int(time_val))
+            return np.array(times)
+
+        def plot(self, save_dir, show=False):
+            plt.figure(figsize=(8, 4))
+            plt.hist(self.fp_times, bins=20, alpha=0.6, label='False Positives')
+            plt.hist(self.fn_times, bins=20, alpha=0.6, label='False Negatives')
+            plt.xlabel('Frame index / Time')
+            plt.ylabel('Count')
+            plt.title('Distribution of mistaken predictions over time')
+            plt.legend()
+            plt.tight_layout()
+            out_path = os.path.join(save_dir, 'mistaken_predictions_time_distribution.png')
+            plt.savefig(out_path)
+            if show:
+                plt.show()
+            plt.close()
+            print(f"Saved time distribution histogram: {out_path}")
+
+    # Save and plot to the mistake_pred_model_id_dir directory
+    time_dist_plotter = MistakenPredictionTimeDistribution(false_positive_coordinates, false_negative_coordinates)
+    time_dist_plotter.plot(mistake_pred_model_id_dir)
 
 if __name__ == '__main__':
     main()
