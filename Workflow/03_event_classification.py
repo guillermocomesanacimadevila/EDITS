@@ -1,3 +1,8 @@
+# 03_event_classification.py
+
+import matplotlib
+matplotlib.use('Agg')  # <--- Fix: Use Agg for headless environments
+
 import sys
 import os
 from pathlib import Path
@@ -26,12 +31,10 @@ sys.path.append(str(project_root / "TAP" / "tarrow" / "tarrow"))
 
 def save_config_metadata(args, output_dir):
     import collections.abc
-
     def is_basic_type(val):
         return isinstance(val, (str, int, float, bool, type(None))) or (
             isinstance(val, collections.abc.Sequence) and all(is_basic_type(v) for v in val)
         )
-
     metadata = {
         "timestamp": str(datetime.now().isoformat()),
         "python_version": str(platform.python_version()),
@@ -45,14 +48,11 @@ def save_config_metadata(args, output_dir):
         metadata["git_commit"] = "unknown"
 
     config_path = Path(output_dir) / "training_config.yaml"
-    # Only dump arguments with "basic" types
     filtered_args = {k: v for k, v in vars(args).items() if is_basic_type(v)}
-    # Also convert all filtered_args values to str just to be extra safe
     filtered_args = {k: str(v) for k, v in filtered_args.items()}
     with open(config_path, "w") as f:
         yaml.safe_dump({**filtered_args, **metadata}, f)
     print(f"Saved config to {config_path}")
-
 
 class BasicBlock(nn.Module):
     def __init__(self, in_channels, out_channels, stride=1):
@@ -235,9 +235,12 @@ def reinitialize_weights(model):
             init.zeros_(layer.bias)
 
 
-def train_cls_head(train_loader, test_loader, patch_size, num_epochs, random_seed, device,
-                   model_load_dir, cls_head_arch, TAP_init,
-                   load_saved_cls_head=False, cls_head_load_path=None):
+def train_cls_head(
+    train_loader, test_loader, patch_size, num_epochs, random_seed, device,
+    model_load_dir, cls_head_arch, TAP_init,
+    load_saved_cls_head=False, cls_head_load_path=None,
+    output_dir=None
+):
     """
     Train the classification head to the task of predicting cell event: no event, division, death
     for the input pair of patches.
@@ -246,6 +249,8 @@ def train_cls_head(train_loader, test_loader, patch_size, num_epochs, random_see
     import torch.optim as optim
     from sklearn.metrics import confusion_matrix, classification_report
     import pandas as pd
+    import numpy as np
+    import os
 
     model = tarrow.models.TimeArrowNet.from_folder(model_folder=model_load_dir)
     model.to(device)
@@ -284,6 +289,7 @@ def train_cls_head(train_loader, test_loader, patch_size, num_epochs, random_see
     optimizer = optim.Adam(cls_head.parameters(), lr=0.001)
     criterion = nn.CrossEntropyLoss()
 
+    # --- Training Loop ---
     for epoch in range(num_epochs):
         cls_head.train()
         running_loss = 0.0
@@ -292,44 +298,40 @@ def train_cls_head(train_loader, test_loader, patch_size, num_epochs, random_see
         for datapoint in train_loader:
             x, y = datapoint[0].to(device), datapoint[1].to(device)
             # Forward pass through the pre-trained model to get the dense representation
-            with torch.no_grad():  # Ensure the pre-trained model is not being updated
+            with torch.no_grad():
                 rep = model.embedding(x)
-
             # Forward pass through the classification head
             outputs = cls_head(rep)
-
             # Calculate the loss
             loss = criterion(outputs, y)
-
             # Backward pass and optimization
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-
             running_loss += loss.item() * x.size(0)
             _, predicted = torch.max(outputs, 1)
             correct += (predicted == y).sum().item()
             total += y.size(0)
-
         epoch_loss = running_loss / total
         epoch_accuracy = correct / total
         print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}, Accuracy: {epoch_accuracy:.4f}")
 
-    # test time
+    # --- TEST LOOP WITH DEBUG PRINTS ---
     running_loss = 0.0
     correct = 0
     total = 0
     count_event_interest = 0
     y_pred = []
     y_true = []
+    y_scores = []  # collect softmax probabilities for class 1
     cls_head.eval()
+    print("\n=== Test set predictions (DEBUG) ===")
     with torch.no_grad():
         for datapoint in test_loader:
             x, y = datapoint[0].to(device), datapoint[1].to(device)
             rep = model.embedding(x)
             outputs = cls_head(rep)
             loss = criterion(outputs, y)
-
             running_loss += loss.item() * x.size(0)
             _, predicted = torch.max(outputs, 1)
             correct += (predicted == y).sum().item()
@@ -337,20 +339,35 @@ def train_cls_head(train_loader, test_loader, patch_size, num_epochs, random_see
             count_event_interest += (y == 1).sum().item()
             y_pred.extend([t.item() for t in predicted])
             y_true.extend([t.item() for t in y])
+            probs = torch.softmax(outputs, dim=1)
+            y_scores.extend(probs[:, 1].cpu().numpy())
+            # --- DEBUG PRINT for every sample ---
+            for i in range(x.size(0)):
+                print(f"Sample {i}: True label = {y[i].item()}, "
+                      f"Pred = {predicted[i].item()}, "
+                      f"Prob_class0 = {probs[i,0].item():.3f}, "
+                      f"Prob_class1 = {probs[i,1].item():.3f}")
 
     epoch_loss = running_loss / total
     epoch_accuracy = correct / total
-    print(f"Test Loss: {epoch_loss:.4f}, Test accuracy: {epoch_accuracy:.4f}")
+    print(f"\nTest Loss: {epoch_loss:.4f}, Test accuracy: {epoch_accuracy:.4f}")
     print(f"There are {count_event_interest} out of {total} crops containing events of interest in the test set")
 
     cm_test = confusion_matrix(y_true, y_pred)
     cm_df = pd.DataFrame(cm_test, index=['Actual 0', 'Actual 1'], columns=['Predicted 0', 'Predicted 1'])
     print("Confusion Matrix test data:")
     print(cm_df)
-
     print(classification_report(y_true, y_pred, target_names=['class 0', 'class 1']))
 
-    # computing the distribution of positive labels in the training set
+    # SAVE OUTPUTS FOR VISUALISATION  ----
+    if output_dir is not None:
+        os.makedirs(output_dir, exist_ok=True)
+        np.save(os.path.join(output_dir, 'y_true.npy'), np.array(y_true))
+        np.save(os.path.join(output_dir, 'y_pred.npy'), np.array(y_pred))
+        np.save(os.path.join(output_dir, 'y_scores.npy'), np.array(y_scores))
+        print(f"Saved test predictions to {output_dir}")
+
+    # Distribution of positive labels in training set
     count_event_interest_train = 0
     total = 0
     y_pred = []
@@ -360,13 +377,11 @@ def train_cls_head(train_loader, test_loader, patch_size, num_epochs, random_see
             x, y = datapoint[0].to(device), datapoint[1].to(device)
             count_event_interest_train += (y == 1).sum().item()
             total += y.size(0)
-
             rep = model.embedding(x)
             outputs = cls_head(rep)
             _, predicted = torch.max(outputs, 1)
             y_pred.extend([t.item() for t in predicted])
             y_true.extend([t.item() for t in y])
-
     print(f"There are {count_event_interest_train} out of {total} crops containing events of interest in the training set")
     cm = confusion_matrix(y_true, y_pred)
     cm_df = pd.DataFrame(cm, index=['Actual 0', 'Actual 1'], columns=['Predicted 0', 'Predicted 1'])
@@ -598,37 +613,73 @@ def multi_runs_training(num_runs, model_seed_init, train_loader, test_loader,
                         cls_head_arch,
                         TAP_init,
                         load_saved_cls_head=False,
-                        cls_head_load_path=None):
+                        cls_head_load_path=None,
+                        output_dir=None):  # <-- ADDED output_dir
+
     import numpy as np
+    import os
+
     precision_class_0_all = []
     precision_class_1_all = []
     recall_class_0_all = []
     recall_class_1_all = []
+    cls_head_trained = None
+    model = None
+
+    # These will collect the predictions/scores from the *last run*
+    y_true = []
+    y_pred = []
+    y_scores = []
+
     for i in range(num_runs):
-        model_seed = model_seed_init + i*20 #args.model_seed
-        cls_head_trained, model, cm_test = train_cls_head(cls_head_arch=cls_head_arch,
-                                                          train_loader=train_loader,
-                                                          test_loader=test_loader,
-                                                          patch_size=size, # args.size
-                                                          num_epochs=training_epochs, #args.training_epochs
-                                                          random_seed=model_seed,
-                                                          device=device,
-                                                          model_load_dir=model_load_dir,
-                                                          load_saved_cls_head=load_saved_cls_head,
-                                                          cls_head_load_path=cls_head_load_path,
-                                                          TAP_init=TAP_init)
-        precision_class_0 = cm_test[0][0] / (cm_test[0][0] + cm_test[1][0])
-        precision_class_1 = cm_test[1][1] / (cm_test[0][1] + cm_test[1][1])
-        recall_class_0 = cm_test[0][0] / (cm_test[0][0] + cm_test[0][1])
-        recall_class_1 = cm_test[1][1] / (cm_test[1][0] + cm_test[1][1])
+        model_seed = model_seed_init + i*20
+        cls_head_trained, model, cm_test = train_cls_head(
+            cls_head_arch=cls_head_arch,
+            train_loader=train_loader,
+            test_loader=test_loader,
+            patch_size=size,
+            num_epochs=training_epochs,
+            random_seed=model_seed,
+            device=device,
+            model_load_dir=model_load_dir,
+            load_saved_cls_head=load_saved_cls_head,
+            cls_head_load_path=cls_head_load_path,
+            TAP_init=TAP_init,
+            output_dir=output_dir  # <-- PASS output_dir TO SAVE .npy FILES
+        )
+        precision_class_0 = cm_test[0][0] / (cm_test[0][0] + cm_test[1][0]) if (cm_test[0][0] + cm_test[1][0]) > 0 else float('nan')
+        precision_class_1 = cm_test[1][1] / (cm_test[0][1] + cm_test[1][1]) if (cm_test[0][1] + cm_test[1][1]) > 0 else float('nan')
+        recall_class_0 = cm_test[0][0] / (cm_test[0][0] + cm_test[0][1]) if (cm_test[0][0] + cm_test[0][1]) > 0 else float('nan')
+        recall_class_1 = cm_test[1][1] / (cm_test[1][0] + cm_test[1][1]) if (cm_test[1][0] + cm_test[1][1]) > 0 else float('nan')
         precision_class_0_all.append(precision_class_0)
         precision_class_1_all.append(precision_class_1)
         recall_class_0_all.append(recall_class_0)
         recall_class_1_all.append(recall_class_1)
 
+    # After training, run predictions on the test set for reporting and visualizations
+    cls_head_trained.eval()
+    with torch.no_grad():
+        for datapoint in test_loader:
+            x, y = datapoint[0].to(device), datapoint[1].to(device)
+            rep = model.embedding(x)
+            outputs = cls_head_trained(rep)
+            _, predicted = torch.max(outputs, 1)
+            probs = torch.softmax(outputs, dim=1)
+            y_true.extend([t.item() for t in y])
+            y_pred.extend([t.item() for t in predicted])
+            y_scores.extend(probs[:, 1].cpu().numpy())
+
+    # --- Save y_true, y_pred, y_scores as .npy files to output_dir (figures) ---
+    if output_dir is not None:
+        os.makedirs(output_dir, exist_ok=True)
+        np.save(os.path.join(output_dir, 'y_true.npy'), np.array(y_true))
+        np.save(os.path.join(output_dir, 'y_pred.npy'), np.array(y_pred))
+        np.save(os.path.join(output_dir, 'y_scores.npy'), np.array(y_scores))
+        print(f"Saved y_true, y_pred, y_scores .npy arrays to {output_dir}")
+
     return (np.array(precision_class_0_all), np.array(precision_class_1_all),
             np.array(recall_class_0_all), np.array(recall_class_1_all),
-            cls_head_trained, model)
+            cls_head_trained, model, y_true, y_pred, y_scores)
 
 
 def save_datasets(train_data_crops_flat, valid_data_crops_flat, test_data_crops_flat, dataset_save_dir):
@@ -651,39 +702,172 @@ class CellEventClassModel(nn.Module):
         y = self._ClsHead(z)
         return y
 
+# === CLASSIFICATION VISUALIZER ===
+class ClassificationVisualizer:
+    def __init__(self, y_true, y_pred, y_scores=None, class_names=None, output_dir="figures"):
+        self.y_true = np.array(y_true)
+        self.y_pred = np.array(y_pred)
+        self.y_scores = np.array(y_scores) if y_scores is not None else None
+        self.class_names = class_names if class_names is not None else ["class 0", "class 1"]
+        self.output_dir = output_dir
+        os.makedirs(output_dir, exist_ok=True)
+        print(f"[DEBUG] ClassificationVisualizer will output to: {output_dir}")
 
-import sys
-import os
-from pathlib import Path
-from datetime import datetime
-import platform
-import yaml
-import git
-import logging
-import configargparse
-import tarrow
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import DataLoader, Sampler, RandomSampler
-import numpy as np
+    def plot_confusion_matrix(self):
+        from sklearn.metrics import confusion_matrix
+        import seaborn as sns
+        import matplotlib.pyplot as plt
+        cm = confusion_matrix(self.y_true, self.y_pred)
+        fig, ax = plt.subplots(figsize=(5, 4))
+        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", cbar=False, 
+                    xticklabels=self.class_names, yticklabels=self.class_names, ax=ax)
+        ax.set_xlabel("Predicted", fontsize=12)
+        ax.set_ylabel("True", fontsize=12)
+        ax.set_title("Confusion Matrix")
+        plt.tight_layout()
+        print(f"[DEBUG] Saving confusion_matrix to {os.path.join(self.output_dir, 'confusion_matrix.png')}")
+        plt.savefig(os.path.join(self.output_dir, "confusion_matrix.png"))
+        plt.savefig(os.path.join(self.output_dir, "confusion_matrix.pdf"))
+        np.savetxt(os.path.join(self.output_dir, "confusion_matrix.csv"), cm, delimiter=",", fmt="%d")
+        plt.close()
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+    def plot_roc_curve(self):
+        if self.y_scores is None: return
+        from sklearn.metrics import roc_curve, auc
+        import matplotlib.pyplot as plt
+        fpr, tpr, _ = roc_curve(self.y_true, self.y_scores)
+        roc_auc = auc(fpr, tpr)
+        plt.figure()
+        plt.plot(fpr, tpr, label=f"AUC = {roc_auc:.2f}")
+        plt.plot([0, 1], [0, 1], 'k--', lw=1)
+        plt.xlabel("False Positive Rate")
+        plt.ylabel("True Positive Rate")
+        plt.title("ROC Curve")
+        plt.legend()
+        plt.tight_layout()
+        print(f"[DEBUG] Saving roc_curve to {os.path.join(self.output_dir, 'roc_curve.png')}")
+        plt.savefig(os.path.join(self.output_dir, "roc_curve.png"))
+        plt.savefig(os.path.join(self.output_dir, "roc_curve.pdf"))
+        plt.close()
 
-# Add tarrow package path dynamically
-script_dir = Path(__file__).resolve().parent
-project_root = script_dir.parent
-sys.path.insert(0, str(project_root / "TAP" / "tarrow"))
-sys.path.append(str(project_root / "TAP" / "tarrow" / "tarrow"))
+    def plot_pr_curve(self):
+        if self.y_scores is None: return
+        from sklearn.metrics import precision_recall_curve, auc
+        import matplotlib.pyplot as plt
+        precision, recall, _ = precision_recall_curve(self.y_true, self.y_scores)
+        ap = auc(recall, precision)
+        plt.figure()
+        plt.plot(recall, precision, label=f"AP = {ap:.2f}")
+        plt.xlabel("Recall")
+        plt.ylabel("Precision")
+        plt.title("Precision-Recall Curve")
+        plt.legend()
+        plt.tight_layout()
+        print(f"[DEBUG] Saving pr_curve to {os.path.join(self.output_dir, 'pr_curve.png')}")
+        plt.savefig(os.path.join(self.output_dir, "pr_curve.png"))
+        plt.savefig(os.path.join(self.output_dir, "pr_curve.pdf"))
+        plt.close()
 
-# ... [ all functions/classes from your original script stay unchanged here ] ...
+    def plot_calibration_curve(self):
+        if self.y_scores is None: return
+        from sklearn.calibration import calibration_curve
+        import matplotlib.pyplot as plt
+        prob_true, prob_pred = calibration_curve(self.y_true, self.y_scores, n_bins=10)
+        plt.figure()
+        plt.plot(prob_pred, prob_true, marker='o', label="Calibration")
+        plt.plot([0, 1], [0, 1], 'k--', label="Perfect")
+        plt.xlabel("Predicted probability")
+        plt.ylabel("Empirical probability")
+        plt.title("Calibration Curve")
+        plt.legend()
+        plt.tight_layout()
+        print(f"[DEBUG] Saving calibration_curve to {os.path.join(self.output_dir, 'calibration_curve.png')}")
+        plt.savefig(os.path.join(self.output_dir, "calibration_curve.png"))
+        plt.savefig(os.path.join(self.output_dir, "calibration_curve.pdf"))
+        plt.close()
 
-# (Omitted for brevity in this snippet: all the class/function definitions you pasted above,
-# including: BasicBlock, SimpleResNet, plot_images_gray_scale, ClsHead, reinitialize_weights, 
-# train_cls_head, count_data_points, BalancedSampler, probing_mistake_predictions, 
-# probing_mistaken_preds, estimate_total_events, save_as_json, data_split, 
-# multi_runs_training, save_datasets, CellEventClassModel)
+    def plot_per_class_metrics(self):
+        from sklearn.metrics import classification_report
+        import pandas as pd
+        import matplotlib.pyplot as plt
+        report = classification_report(self.y_true, self.y_pred, target_names=self.class_names, output_dict=True)
+        df = pd.DataFrame(report).transpose()
+        df.to_csv(os.path.join(self.output_dir, "classification_report.csv"))
+        df_metrics = df.loc[self.class_names][['precision', 'recall', 'f1-score']]
+        ax = df_metrics.plot(kind='bar', figsize=(7, 4))
+        ax.set_ylim(0, 1)
+        plt.title("Per-class Metrics")
+        plt.ylabel("Score")
+        plt.tight_layout()
+        print(f"[DEBUG] Saving per_class_metrics to {os.path.join(self.output_dir, 'per_class_metrics.png')}")
+        plt.savefig(os.path.join(self.output_dir, "per_class_metrics.png"))
+        plt.savefig(os.path.join(self.output_dir, "per_class_metrics.pdf"))
+        plt.close()
+        df_metrics.to_csv(os.path.join(self.output_dir, "per_class_metrics.csv"))
+
+    def run_all(self):
+        self.plot_confusion_matrix()
+        self.plot_roc_curve()
+        self.plot_pr_curve()
+        self.plot_calibration_curve()
+        self.plot_per_class_metrics()
+
+class IoUVisualizer:
+    def __init__(self, y_true_masks, y_pred_masks, class_names=None, output_dir="figures"):
+        self.y_true_masks = np.array(y_true_masks)
+        self.y_pred_masks = np.array(y_pred_masks)
+        self.class_names = class_names if class_names is not None else ["class 0", "class 1"]
+        self.output_dir = output_dir
+        os.makedirs(output_dir, exist_ok=True)
+
+    def compute_iou(self):
+        from sklearn.metrics import jaccard_score
+        # Assume flattening masks; works for binary and multiclass
+        y_true_flat = self.y_true_masks.reshape(len(self.y_true_masks), -1)
+        y_pred_flat = self.y_pred_masks.reshape(len(self.y_pred_masks), -1)
+        ious = []
+        for yt, yp in zip(y_true_flat, y_pred_flat):
+            ious.append(jaccard_score(yt, yp, average=None))
+        self.ious = np.array(ious)  # shape: (N, n_classes)
+        return self.ious
+
+    def plot_iou_histogram(self):
+        import matplotlib.pyplot as plt
+        iou_flat = self.ious.mean(axis=1)
+        plt.figure(figsize=(6, 4))
+        plt.hist(iou_flat, bins=20, color="#2386E6", edgecolor="black", alpha=0.7)
+        plt.title("IoU Histogram")
+        plt.xlabel("IoU")
+        plt.ylabel("Count")
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.output_dir, "iou_histogram.png"))
+        plt.savefig(os.path.join(self.output_dir, "iou_histogram.pdf"))
+        plt.close()
+
+    def plot_iou_matrix(self):
+        # Mean IoU per class
+        import matplotlib.pyplot as plt
+        import seaborn as sns
+        mean_ious = self.ious.mean(axis=0)
+        plt.figure(figsize=(6, 2))
+        sns.heatmap(mean_ious[np.newaxis, :], annot=True, fmt=".2f",
+                    xticklabels=self.class_names, yticklabels=["Mean IoU"], cmap="Blues")
+        plt.title("Per-class IoU")
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.output_dir, "iou_matrix.png"))
+        plt.savefig(os.path.join(self.output_dir, "iou_matrix.pdf"))
+        plt.close()
+
+    def save_iou_csv(self):
+        import pandas as pd
+        df = pd.DataFrame(self.ious, columns=self.class_names)
+        df.to_csv(os.path.join(self.output_dir, "per_image_iou.csv"), index=False)
+
+    def run_all(self):
+        self.compute_iou()
+        self.plot_iou_histogram()
+        self.plot_iou_matrix()
+        self.save_iou_csv()
 
 def main():
     import time
@@ -693,7 +877,7 @@ def main():
         config_file_parser_class=configargparse.YAMLConfigFileParser,
         allow_abbrev=False,
     )
-
+    
     p.add('--config', is_config_file=True, help='Path to config YAML file')
     p.add_argument("--input_frame")
     p.add_argument("--input_mask")
@@ -727,39 +911,29 @@ def main():
     p.add_argument("--TAP_init")
 
     args = p.parse_args()
-
-    # Defensive: If dataset_save_dir is None or empty, use model_save_dir or "runs"
     if not args.dataset_save_dir:
         args.dataset_save_dir = args.model_save_dir or "runs"
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Running on", device)
 
     data_load_path = os.path.join(args.data_save_dir, 'preprocessed_image_crops.pth')
     image_crops_flat_loaded = torch.load(data_load_path)
-
     print(f"image_crops_flat_loaded: {len(image_crops_flat_loaded)}")
-
     train_data_ratio = 0.6
     validation_data_ratio = 0.2
-
     train_data_crops_flat, valid_data_crops_flat, test_data_crops_flat = data_split(
         image_crops_flat_loaded,
         train_data_ratio,
         validation_data_ratio,
         args.data_seed
     )
-
-    # PATCH: Handle small datasets (≤2 crops)
-    min_required_crops = 2  # allow pipeline to run for 1 or 2 crops
+    min_required_crops = 2
     if len(image_crops_flat_loaded) <= min_required_crops:
         print(f"⚠️  Very small dataset ({len(image_crops_flat_loaded)} crops).")
         print("   Using all crops for both training and testing. Splitting skipped.")
         train_data_crops_flat = image_crops_flat_loaded
         valid_data_crops_flat = []
         test_data_crops_flat = image_crops_flat_loaded
-
-    # Extra check: gracefully exit if still not enough data
     if len(train_data_crops_flat) == 0 or len(test_data_crops_flat) == 0:
         print("\n❌ Not enough data to split into train/test sets!")
         print(f"Train size: {len(train_data_crops_flat)}, Test size: {len(test_data_crops_flat)}")
@@ -767,7 +941,6 @@ def main():
         return
 
     estimated_total_event_count = estimate_total_events(image_crops_flat_loaded)
-
     train_loader = DataLoader(
         train_data_crops_flat,
         sampler=BalancedSampler(
@@ -782,7 +955,6 @@ def main():
         drop_last=False,
         persistent_workers=False
     )
-
     torch.manual_seed(args.data_seed)
     test_loader = DataLoader(
         test_data_crops_flat,
@@ -792,13 +964,10 @@ def main():
         drop_last=False,
         persistent_workers=False
     )
-
     print(f"Estimated event count: {estimated_total_event_count}")
     print(f"Train samples and positives: {count_data_points(train_loader)}")
     print(f"Test samples and positives: {count_data_points(test_loader)}")
-
     print(f"Loading pretrained TAP model from: {args.TAP_model_load_path}")
-
     test_loader_probing = DataLoader(
         test_data_crops_flat,
         batch_size=1,
@@ -806,27 +975,26 @@ def main():
         drop_last=False,
         persistent_workers=False
     )
-
     start_time = time.time()
-
+    vis_outdir = os.path.join(args.data_save_dir, "figures")
+    print(f"[DEBUG] All figures will be saved in: {vis_outdir}")
     (precision_class_0_all, precision_class_1_all,
      recall_class_0_all, recall_class_1_all,
-     cls_head_trained, model) = multi_runs_training(
+     cls_head_trained, model, y_true, y_pred, y_scores) = multi_runs_training(
         args.num_runs, args.model_seed, train_loader,
         test_loader, args.size, args.training_epochs,
         device, args.TAP_model_load_path,
         cls_head_arch=args.cls_head_arch,
         TAP_init=args.TAP_init,
         load_saved_cls_head=args.load_saved_cls_head,
-        cls_head_load_path=args.cls_head_load_path)
-
+        cls_head_load_path=args.cls_head_load_path,
+        output_dir=vis_outdir)
     print("Final Metrics (mean, std):")
     for label, values in zip(
         ["Precision Class 0", "Precision Class 1", "Recall Class 0", "Recall Class 1"],
         [precision_class_0_all, precision_class_1_all, recall_class_0_all, recall_class_1_all]
     ):
         print(f"{label}: mean={round(np.mean(values), 2)}, std={round(np.std(values), 2)}")
-
     end_time = time.time()
     print(f"Time used for model fine-tuning: {round(end_time - start_time, 2)} seconds")
 
@@ -835,12 +1003,38 @@ def main():
     model_save_path = os.path.join(args.model_save_dir, f'{args.model_id}.pth')
     torch.save(combined_model.state_dict(), model_save_path)
     print(f"Combined model saved to {model_save_path}")
-
     save_config_metadata(args, args.model_save_dir)
-
     save_datasets(train_data_crops_flat, valid_data_crops_flat,
                   test_data_crops_flat, args.data_save_dir)
-
+    print("\nGenerating classification visualizations...")
+    visualizer = ClassificationVisualizer(
+        y_true=y_true,
+        y_pred=y_pred,
+        y_scores=y_scores,
+        class_names=["No Event", "Event"],
+        output_dir=vis_outdir
+    )
+    try:
+        visualizer.run_all()
+    except Exception as e:
+        print(f"Error in visualizer: {e}")
+    print(f"All classification figures and CSVs saved to {vis_outdir}\n")
+    try:
+        print("Generating IoU/segmentation visualizations...")
+        y_true_masks, y_pred_masks = None, None
+        if y_true_masks is not None and y_pred_masks is not None:
+            iou_vis = IoUVisualizer(
+                y_true_masks=y_true_masks,
+                y_pred_masks=y_pred_masks,
+                class_names=["Background", "Event"],
+                output_dir=vis_outdir
+            )
+            iou_vis.run_all()
+            print(f"All IoU/segmentation figures and CSVs saved to {vis_outdir}\n")
+        else:
+            print("Skipped IoU visualization: no ground-truth/predicted masks provided.")
+    except Exception as e:
+        print(f"Error during IoU visualization: {e}")
 
 if __name__ == "__main__":
     main()
