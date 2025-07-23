@@ -1,6 +1,7 @@
 # 01_fine-tune.py
 
-import os, sys
+import os
+import sys
 from pathlib import Path
 import logging
 import platform
@@ -8,9 +9,12 @@ from datetime import datetime
 import yaml
 import git
 import configargparse
-
 import torch
+import torch.nn as nn
 from torch.utils.data import ConcatDataset, Subset, Dataset
+import csv
+import numpy as np
+import matplotlib.pyplot as plt
 
 # -- Setup paths and tarrow import --
 script_dir = Path(__file__).resolve().parent
@@ -33,64 +37,68 @@ logger = logging.getLogger(__name__)
 
 # --- Argument parser ---
 def get_argparser():
-    p = configargparse.ArgParser(
+    parser = configargparse.ArgParser(
         formatter_class=configargparse.ArgumentDefaultsHelpFormatter,
         config_file_parser_class=configargparse.YAMLConfigFileParser,
         allow_abbrev=False,
     )
+    parser.add("-c", "--config", is_config_file=True, help="Path to YAML config file.")
+    parser.add("--name", type=str, default=None)
+    parser.add("--input_train", type=str, nargs="+", required=False)
+    parser.add("--input_val", type=str, nargs="*", default=None)
+    parser.add("--read_recursion_level", type=int, default=0)
+    parser.add("--split_train", type=float, nargs=2, action="append", required=False)
+    parser.add("--split_val", type=float, nargs="+", action="append", required=False)
+    parser.add("-e", "--epochs", type=int, default=200)
+    parser.add("--seed", type=int, default=42)
+    parser.add("--backbone", type=str, default="unet")
+    parser.add("--projhead", default="minimal_batchnorm")
+    parser.add("--classhead", default="minimal")
+    parser.add("--perm_equiv", type=tarrow.utils.str2bool, default=True)
+    parser.add("--features", type=int, default=32)
+    parser.add("--n_images", type=int, default=None)
+    parser.add("-o", "--outdir", type=str, default="runs")
+    parser.add("--size", type=int, default=96)
+    parser.add("--cam_size", type=int, default=None)
+    parser.add("--batchsize", type=int, default=128)
+    parser.add("--train_samples_per_epoch", type=int, default=100000)
+    parser.add("--val_samples_per_epoch", type=int, default=10000)
+    parser.add("--channels", type=int, default=0)
+    parser.add("--reject_background", type=tarrow.utils.str2bool, default=False)
+    parser.add("--cam_subsampling", type=int, default=3)
+    parser.add("--write_final_cams", type=tarrow.utils.str2bool, default=False)
+    parser.add("--augment", type=int, default=5)
+    parser.add("--subsample", type=int, default=1)
+    parser.add("--delta", type=int, nargs="+", default=[1])
+    parser.add("--frames", type=int, default=2)
+    parser.add("--lr", type=float, default=1e-4)
+    parser.add("--lr_scheduler", default="cyclic")
+    parser.add("--lr_patience", type=int, default=50)
+    parser.add("--ndim", type=int, default=2)
+    parser.add("--binarize", action="store_true")
+    parser.add("--decor_loss", type=float, default=0.01)
+    parser.add("--save_checkpoint_every", type=int, default=25)
+    parser.add("--num_workers", type=int, default=8)
+    parser.add("--gpu", "-g", type=str, default="0")
+    parser.add("--tensorboard", type=tarrow.utils.str2bool, default=True)
+    parser.add("--visual_dataset_frequency", type=int, default=10)
+    parser.add("--timestamp", action="store_true")
+    parser.add("--input_mask", type=str, nargs="*", default=None)
+    parser.add("--pixel_resolution", type=float, default=None)
+    parser.add("--min_pixels", type=int, default=None)
+    parser.add("--config_yaml", type=str, default=None)
+    parser.add("--metrics_csv_list", type=str, nargs="*", default=None,
+               help="List of metrics.csv files (for summary plotting only, skips training)")
+    return parser
 
-    p.add("-c", "--config", is_config_file=True, help="Path to YAML config file.")
-    p.add("--name", type=str, default=None)
-    p.add("--input_train", type=str, nargs="+", required=False)
-    p.add("--input_val", type=str, nargs="*", default=None)
-    p.add("--read_recursion_level", type=int, default=0)
-    p.add("--split_train", type=float, nargs=2, action="append", required=False)
-    p.add("--split_val", type=float, nargs="+", action="append", required=False)
-    p.add("-e", "--epochs", type=int, default=200)
-    p.add("--seed", type=int, default=42)
-    p.add("--backbone", type=str, default="unet")
-    p.add("--projhead", default="minimal_batchnorm")
-    p.add("--classhead", default="minimal")
-    p.add("--perm_equiv", type=tarrow.utils.str2bool, default=True)
-    p.add("--features", type=int, default=32)
-    p.add("--n_images", type=int, default=None)
-    p.add("-o", "--outdir", type=str, default="runs")
-    p.add("--size", type=int, default=96)
-    p.add("--cam_size", type=int, default=None)
-    p.add("--batchsize", type=int, default=128)
-    p.add("--train_samples_per_epoch", type=int, default=100000)
-    p.add("--val_samples_per_epoch", type=int, default=10000)
-    p.add("--channels", type=int, default=0)
-    p.add("--reject_background", type=tarrow.utils.str2bool, default=False)
-    p.add("--cam_subsampling", type=int, default=3)
-    p.add("--write_final_cams", type=tarrow.utils.str2bool, default=False)
-    p.add("--augment", type=int, default=5)
-    p.add("--subsample", type=int, default=1)
-    p.add("--delta", type=int, nargs="+", default=[1])
-    p.add("--frames", type=int, default=2)
-    p.add("--lr", type=float, default=1e-4)
-    p.add("--lr_scheduler", default="cyclic")
-    p.add("--lr_patience", type=int, default=50)
-    p.add("--ndim", type=int, default=2)
-    p.add("--binarize", action="store_true")
-    p.add("--decor_loss", type=float, default=0.01)
-    p.add("--save_checkpoint_every", type=int, default=25)
-    p.add("--num_workers", type=int, default=8)
-    p.add("--gpu", "-g", type=str, default="0")
-    p.add("--tensorboard", type=tarrow.utils.str2bool, default=True)
-    p.add("--visual_dataset_frequency", type=int, default=10)
-    p.add("--timestamp", action="store_true")
-
-    return p
-
-# --- Config saving functions (improved!) ---
+# --- Config saving functions ---
 def save_full_config(args, outdir):
     outdir = Path(outdir).resolve()
     outdir.mkdir(parents=True, exist_ok=True)
     metadata = {
         "timestamp": datetime.now().isoformat(),
         "python_version": platform.python_version(),
-        "torch_version": torch.__version__,
+        "torch_version": str(torch.__version__),
         "cuda_available": torch.cuda.is_available(),
     }
     try:
@@ -162,26 +170,27 @@ def _subset(data: Dataset, split=(0, 1.0)):
     return Subset(data, range(low, high))
 
 def _create_loader(dataset, args, num_samples, num_workers, idx=None, sequential=False):
+    sampler = (
+        torch.utils.data.SequentialSampler(
+            torch.utils.data.Subset(
+                dataset,
+                torch.multinomial(
+                    torch.ones(len(dataset)), num_samples, replacement=True
+                ),
+            )
+        )
+        if sequential
+        else torch.utils.data.RandomSampler(
+            dataset, replacement=True, num_samples=num_samples
+        )
+    )
     return torch.utils.data.DataLoader(
         dataset,
-        sampler=(
-            torch.utils.data.SequentialSampler(
-                torch.utils.data.Subset(
-                    dataset,
-                    torch.multinomial(
-                        torch.ones(len(dataset)), num_samples, replacement=True
-                    ),
-                )
-            )
-            if sequential
-            else torch.utils.data.RandomSampler(
-                dataset, replacement=True, num_samples=num_samples
-            )
-        ),
+        sampler=sampler,
         batch_size=args.batchsize,
         num_workers=num_workers,
         drop_last=False,
-        persistent_workers=True if num_workers > 0 else False,
+        persistent_workers=num_workers > 0,
     )
 
 def _build_outdir_path(args) -> Path:
@@ -190,7 +199,8 @@ def _build_outdir_path(args) -> Path:
         timestamp = f'{datetime.now().strftime("%m-%d-%H-%M-%S")}'
         name = f"{timestamp}_"
     suffix = f"backbone_{args.backbone}"
-    name = f"{name}{args.name}_{suffix}"
+    safe_name = args.name if args.name else "run"
+    name = f"{name}{safe_name}_{suffix}"
     outdir = Path(args.outdir).resolve()
     outdir_path = outdir / name
     if outdir_path.exists():
@@ -224,8 +234,219 @@ def _write_cams(data_visuals, model, device):
             outdir=model.outdir / "visuals" / f"dataset_{i}",
         )
 
+def save_metrics_csv(metrics, outdir):
+    if not metrics:
+        logger.warning("No metrics to save for CSV.")
+        return
+    csv_path = Path(outdir) / "metrics.csv"
+    fieldnames = sorted(metrics[0].keys())
+    with open(csv_path, "w", newline="") as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in metrics:
+            writer.writerow(row)
+    logger.info(f"Saved per-epoch metrics to {csv_path}")
+
+# -- Multi-run mean±std plotting (with shadow) --
+plt.rcParams.update({
+    "font.family": "sans-serif",
+    "font.sans-serif": ["DejaVu Sans"],
+    "axes.labelsize": 14,
+    "axes.titlesize": 16,
+    "xtick.labelsize": 12,
+    "ytick.labelsize": 12,
+    "axes.linewidth": 1.2,
+    "lines.linewidth": 2,
+    "legend.fontsize": 12,
+    "figure.dpi": 300,
+    "savefig.dpi": 300,
+})
+
+class TrainingCurvesPlotter:
+    def __init__(self, metrics_csv_list, outdir):
+        import pandas as pd
+        self.outdir = os.path.join(str(outdir), "figures")
+        os.makedirs(self.outdir, exist_ok=True)
+        if isinstance(metrics_csv_list, str):
+            metrics_csv_list = [metrics_csv_list]
+        self.dfs = [pd.read_csv(f) for f in metrics_csv_list]
+
+        # Detect if this is a per-epoch metrics CSV (from training) or a summary CSV (from pipeline)
+        if 'epoch' in self.dfs[0].columns:
+            self.epochs = self.dfs[0]['epoch'].values
+            self.train_loss = np.stack([df['train_loss'].values for df in self.dfs])
+            self.val_loss   = np.stack([df['val_loss'].values for df in self.dfs])
+            # Try both train_acc/val_acc or accuracy/val_accuracy
+            if 'train_acc' in self.dfs[0] and 'val_acc' in self.dfs[0]:
+                self.train_acc = np.stack([df['train_acc'].values for df in self.dfs])
+                self.val_acc   = np.stack([df['val_acc'].values for df in self.dfs])
+            elif 'accuracy' in self.dfs[0] and 'val_accuracy' in self.dfs[0]:
+                self.train_acc = np.stack([df['accuracy'].values for df in self.dfs])
+                self.val_acc   = np.stack([df['val_accuracy'].values for df in self.dfs])
+            else:
+                self.train_acc = None
+                self.val_acc = None
+            self.is_per_epoch = True
+        else:
+            self.epochs = None
+            self.train_loss = None
+            self.val_loss = None
+            self.train_acc = None
+            self.val_acc = None
+            self.is_per_epoch = False
+            print("No 'epoch' column found in metrics CSVs. Per-epoch learning curves will be skipped.")
+
+    def plot_loss_curve(self, filename="loss_curve_shadow"):
+        if not self.is_per_epoch:
+            print("Skipping loss curve: no per-epoch data available.")
+            return
+
+        # === Styling ===
+        c_train = "#2386E6"
+        c_val   = "#FC573B"
+        lw = 2
+        alpha_shade = 0.16
+        fs_title = 17
+        fs_labels = 15
+
+        fig, ax = plt.subplots(figsize=(9, 5))
+        mean_train = self.train_loss.mean(axis=0)
+        std_train  = self.train_loss.std(axis=0)
+        mean_val   = self.val_loss.mean(axis=0)
+        std_val    = self.val_loss.std(axis=0)
+
+        ax.plot(self.epochs, mean_train, label="Train Loss (mean)", color=c_train, linewidth=lw)
+        ax.fill_between(self.epochs, mean_train-std_train, mean_train+std_train, color=c_train, alpha=alpha_shade, label="Train ± std")
+        ax.plot(self.epochs, mean_val, label="Val Loss (mean)", color=c_val, linewidth=lw)
+        ax.fill_between(self.epochs, mean_val-std_val, mean_val+std_val, color=c_val, alpha=alpha_shade, label="Val ± std")
+        ax.set_xlabel("Epoch", fontsize=fs_labels)
+        ax.set_ylabel("Loss", fontsize=fs_labels)
+        ax.set_title("Training and Validation Loss (mean ± std across runs)", fontsize=fs_title)
+        ax.legend(fontsize=13)
+        ax.grid(alpha=0.18)
+        plt.tight_layout()
+        fpath_png = os.path.join(self.outdir, f"{filename}.png")
+        fpath_pdf = os.path.join(self.outdir, f"{filename}.pdf")
+        plt.savefig(fpath_png, dpi=320, bbox_inches='tight')
+        plt.savefig(fpath_pdf, bbox_inches='tight')
+        plt.close()
+        print(f"Loss curves with shaded std saved to {fpath_png} and {fpath_pdf}")
+
+    def plot_accuracy_curve(self, filename="accuracy_curve_shadow"):
+        if not self.is_per_epoch:
+            print("Skipping accuracy curve: no per-epoch data available.")
+            return
+        if self.train_acc is None or self.val_acc is None:
+            print("Accuracy columns not found in metrics, skipping accuracy plot.")
+            return
+
+        # === Styling ===
+        c_train = "#2386E6"
+        c_val   = "#FC573B"
+        lw = 2
+        alpha_shade = 0.16
+        fs_title = 17
+        fs_labels = 15
+
+        fig, ax = plt.subplots(figsize=(9, 5))
+        mean_train = self.train_acc.mean(axis=0)
+        std_train  = self.train_acc.std(axis=0)
+        mean_val   = self.val_acc.mean(axis=0)
+        std_val    = self.val_acc.std(axis=0)
+
+        ax.plot(self.epochs, mean_train, "--", label="Train Accuracy (mean)", color=c_train, linewidth=lw)
+        ax.fill_between(self.epochs, mean_train-std_train, mean_train+std_train, color=c_train, alpha=alpha_shade, label="Train ± std")
+        ax.plot(self.epochs, mean_val, "--", label="Val Accuracy (mean)", color=c_val, linewidth=lw)
+        ax.fill_between(self.epochs, mean_val-std_val, mean_val+std_val, color=c_val, alpha=alpha_shade, label="Val ± std")
+        ax.set_xlabel("Epoch", fontsize=fs_labels)
+        ax.set_ylabel("Accuracy", fontsize=fs_labels)
+        ax.set_ylim(0.5, 1.01)
+        ax.set_title("Training and Validation Accuracy (mean ± std across runs)", fontsize=fs_title)
+        ax.legend(fontsize=13)
+        ax.grid(alpha=0.18)
+        plt.tight_layout()
+        fpath_png = os.path.join(self.outdir, f"{filename}.png")
+        fpath_pdf = os.path.join(self.outdir, f"{filename}.pdf")
+        plt.savefig(fpath_png, dpi=320, bbox_inches='tight')
+        plt.savefig(fpath_pdf, bbox_inches='tight')
+        plt.close()
+        print(f"Accuracy curves with shaded std saved to {fpath_png} and {fpath_pdf}")
+
+    def plot_all_multipanel(self, filename="curves_multipanel"):
+        if not self.is_per_epoch:
+            print("Skipping multipanel curves: no per-epoch data available.")
+            return
+
+        # === Styling ===
+        c_train = "#2386E6"
+        c_val   = "#FC573B"
+        lw = 2
+        alpha_shade = 0.16
+        fs_title = 17
+        fs_labels = 15
+
+        fig, axs = plt.subplots(1, 2, figsize=(16, 5.5))
+
+        # --- LOSS PANEL ---
+        ax = axs[0]
+        mean_train = self.train_loss.mean(axis=0)
+        std_train  = self.train_loss.std(axis=0)
+        mean_val   = self.val_loss.mean(axis=0)
+        std_val    = self.val_loss.std(axis=0)
+
+        ax.plot(self.epochs, mean_train, label="Train Loss (mean)", color=c_train, linewidth=lw)
+        ax.fill_between(self.epochs, mean_train-std_train, mean_train+std_train, color=c_train, alpha=alpha_shade, label="Train ± std")
+        ax.plot(self.epochs, mean_val, label="Val Loss (mean)", color=c_val, linewidth=lw)
+        ax.fill_between(self.epochs, mean_val-std_val, mean_val+std_val, color=c_val, alpha=alpha_shade, label="Val ± std")
+        ax.set_xlabel("Epoch", fontsize=fs_labels)
+        ax.set_ylabel("Loss", fontsize=fs_labels)
+        ax.set_title("Training and Validation Loss", fontsize=fs_title)
+        ax.legend(fontsize=12)
+        ax.grid(alpha=0.18)
+
+        # --- ACCURACY PANEL ---
+        ax = axs[1]
+        if self.train_acc is not None and self.val_acc is not None:
+            mean_train = self.train_acc.mean(axis=0)
+            std_train  = self.train_acc.std(axis=0)
+            mean_val   = self.val_acc.mean(axis=0)
+            std_val    = self.val_acc.std(axis=0)
+
+            ax.plot(self.epochs, mean_train, "--", label="Train Accuracy (mean)", color=c_train, linewidth=lw)
+            ax.fill_between(self.epochs, mean_train-std_train, mean_train+std_train, color=c_train, alpha=alpha_shade, label="Train ± std")
+            ax.plot(self.epochs, mean_val, "--", label="Val Accuracy (mean)", color=c_val, linewidth=lw)
+            ax.fill_between(self.epochs, mean_val-std_val, mean_val+std_val, color=c_val, alpha=alpha_shade, label="Val ± std")
+            ax.set_xlabel("Epoch", fontsize=fs_labels)
+            ax.set_ylabel("Accuracy", fontsize=fs_labels)
+            ax.set_ylim(0.5, 1.01)
+            ax.set_title("Training and Validation Accuracy", fontsize=fs_title)
+            ax.legend(fontsize=12)
+            ax.grid(alpha=0.18)
+        else:
+            ax.text(0.5, 0.5, "No accuracy columns found", ha='center', va='center', fontsize=16)
+            ax.set_axis_off()
+
+        plt.tight_layout()
+        fpath_png = os.path.join(self.outdir, f"{filename}.png")
+        fpath_pdf = os.path.join(self.outdir, f"{filename}.pdf")
+        plt.savefig(fpath_png, dpi=320, bbox_inches='tight')
+        plt.savefig(fpath_pdf, bbox_inches='tight')
+        plt.close()
+        print(f"Multipanel loss/accuracy curves saved to {fpath_png} and {fpath_pdf}")
+
+    def plot_all(self):
+        self.plot_loss_curve()
+        self.plot_accuracy_curve()
+
 # --- Main training logic ---
 def main(args):
+    if args.metrics_csv_list:
+        # Plot summary and exit (skip training)
+        plotter = TrainingCurvesPlotter(args.metrics_csv_list, args.outdir)
+        plotter.plot_all()
+        print("Summary plots generated. Exiting (no training run).")
+        return
+
     if not args.input_train:
         raise ValueError("Missing required field: input_train (use CLI or YAML).")
     if not args.split_train:
@@ -245,6 +466,8 @@ def main(args):
 
     outdir = _build_outdir_path(args)
     outdir.mkdir(parents=True, exist_ok=True)
+    figures_dir = outdir / "figures"
+    figures_dir.mkdir(exist_ok=True)
 
     for p in args.input_train:
         if not Path(p).exists():
@@ -260,7 +483,6 @@ def main(args):
     except git.InvalidGitRepositoryError:
         pass
 
-    # ---- BEGIN DEVICE SETUP BLOCK (AUTOMATED) ----
     tarrow.utils.seed(args.seed)
     try:
         use_gpu = (
@@ -272,25 +494,27 @@ def main(args):
         if use_gpu:
             device, n_gpus = tarrow.utils.set_device(args.gpu)
             if n_gpus > 1:
-                raise NotImplementedError("Multi-GPU training not implemented yet.")
+                logger.info(f"Using {n_gpus} GPUs with DataParallel.")
+                device = torch.device(f"cuda:{args.gpu.split(',')[0]}")
+            else:
+                device = torch.device(f"cuda:{args.gpu}")
         else:
-            raise RuntimeError("No GPU available or requested. Using CPU.")
+            logger.info("No GPU requested or available, using CPU.")
+            device = torch.device("cpu")
+            n_gpus = 0
     except Exception as e:
         logger.warning(f"Could not set GPU device ({e}), falling back to CPU.")
         device = torch.device("cpu")
         n_gpus = 0
     logger.info(f"Using device: {device}")
-    # ---- END DEVICE SETUP BLOCK (AUTOMATED) ----
 
     augmenter = get_augmenter(args.augment)
 
-    # Collect input paths (recursively if needed)
     inputs = {}
     for inp, phase in zip((args.input_train, args.input_val), ("train", "val")):
         inputs[phase] = _get_paths_recursive(inp, args.read_recursion_level)
         logger.debug(f"{phase} datasets: {inputs[phase]}")
 
-    # Build visualisation datasets
     logger.info("Build visualisation datasets.")
     data_visuals = tuple(
         _build_dataset(
@@ -306,7 +530,6 @@ def main(args):
         for inp in set([*inputs["train"], *inputs["val"]])
     )
 
-    # Build train datasets
     logger.info("Build training datasets.")
     data_train = ConcatDataset(
         _build_dataset(
@@ -323,7 +546,6 @@ def main(args):
         for inp in inputs["train"]
     )
 
-    # Build validation datasets
     logger.info("Build validation datasets.")
     data_val = ConcatDataset(
         _build_dataset(
@@ -361,33 +583,74 @@ def main(args):
     )
 
     model = TimeArrowNet(**model_kwargs)
+
+    if n_gpus > 1:
+        model = nn.DataParallel(model)
+        logger.info("Model wrapped with DataParallel for multi-GPU training.")
+
     model.to(device)
+    logger.info(f"Number of parameters: {sum(p.numel() for p in model.parameters()) / 1.e6:.2f} Million")
 
-    logger.info(f"Number of params: {sum(p.numel() for p in model.parameters())/1.e6:.2f} M")
-
-    # --- Save configs with improved error handling ---
     save_partial_config(args, outdir)
     save_full_config(args, outdir)
 
     assert args.ndim == 2
 
-    model.fit(
-        loader_train=loader_train,
-        loader_val=loader_val,
-        lr=args.lr,
-        lr_scheduler=args.lr_scheduler,
-        lr_patience=args.lr_patience,
-        epochs=args.epochs,
-        steps_per_epoch=args.train_samples_per_epoch // args.batchsize,
-        visual_datasets=tuple(
-            Subset(d, list(range(0, len(d), 1 + (len(d) // args.cam_subsampling))))
-            for d in data_visuals
-        ),
-        visual_dataset_frequency=args.visual_dataset_frequency,
-        tensorboard=bool(args.tensorboard),
-        save_checkpoint_every=args.save_checkpoint_every,
-        lambda_decorrelation=args.decor_loss,
-    )
+    metrics = None
+    try:
+        metrics = model.fit(
+            loader_train=loader_train,
+            loader_val=loader_val,
+            lr=args.lr,
+            lr_scheduler=args.lr_scheduler,
+            lr_patience=args.lr_patience,
+            epochs=args.epochs,
+            steps_per_epoch=args.train_samples_per_epoch // args.batchsize,
+            visual_datasets=tuple(
+                Subset(d, list(range(0, len(d), 1 + (len(d) // args.cam_subsampling))))
+                for d in data_visuals
+            ),
+            visual_dataset_frequency=args.visual_dataset_frequency,
+            tensorboard=bool(args.tensorboard),
+            save_checkpoint_every=args.save_checkpoint_every,
+            lambda_decorrelation=args.decor_loss,
+        )
+        # --------------- PATCH: Add epoch column if missing ---------------
+        if metrics and 'epoch' not in metrics[0]:
+            for idx, row in enumerate(metrics):
+                row['epoch'] = idx + 1
+        # ------------------------------------------------------------------
+    except Exception as e:
+        logger.error(f"Training failed with error: {e}")
+        sys.exit(1)
+
+    save_metrics_csv(metrics, outdir)
+
+    model_kwargs_serializable = model_kwargs.copy()
+    model_kwargs_serializable['device'] = str(model_kwargs_serializable['device'])
+    model_folder = outdir / f"{outdir.name}_backbone_{args.backbone}"
+    model_folder.mkdir(parents=True, exist_ok=True)
+    figures_dir = outdir / "figures"
+    figures_dir.mkdir(exist_ok=True)
+
+    if isinstance(model, nn.DataParallel):
+        torch.save(model.module.state_dict(), model_folder / "model.pth")
+    else:
+        torch.save(model.state_dict(), model_folder / "model.pth")
+
+    with open(model_folder / "model_kwargs.yaml", "w") as f:
+        yaml.safe_dump(model_kwargs_serializable, f)
+
+    logger.info(f"Saved model and configuration to {model_folder}")
+
+    try:
+        csv_path = Path(outdir) / "metrics.csv"
+        if csv_path.exists():
+            plotter = TrainingCurvesPlotter([str(csv_path)], outdir)
+            plotter.plot_all()
+            plotter.plot_all_multipanel() 
+    except Exception as e:
+        logger.warning(f"Failed to plot training curves: {e}")
 
     if args.write_final_cams:
         _write_cams(data_visuals, model, device)
