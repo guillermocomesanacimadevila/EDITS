@@ -8,11 +8,11 @@ Cangxiong Chen, Guillermo Comesaña Cimadevila, Vinay P. Namboodiri, Julia E. Se
 ### Run
 
 ```bash
-git clone https://github.com/guillermocomesanacimadevila/Synergy_project.git
+git clone https://github.com/guillermocomesanacimadevila/CellFate.git
 ```
 
 ```bash
-cd ~/Synergy_project && bash run_tap_conda.sh
+cd ~/CellFate && bash run_tap_conda.sh
 ```
 
 ### Test configuration example
