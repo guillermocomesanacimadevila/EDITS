@@ -15,7 +15,7 @@ Cangxiong Chen, Guillermo Comesaña Cimadevila, Vinay P. Namboodiri, Julia E. Se
 It uses self-supervised learning (Time Arrow Prediction, TAP) to train robust feature representations, followed by event classification, hyperparameter search, and publication-ready outputs.
 
 - **No coding required:** Everything is menu-driven and beginner-friendly.
-- **Optimised for cloud and GPU:** Runs beautifully on vas.ai H200 France (H100), but also supports CPU or Mac (albeit slower).
+- **Optimised for cloud and GPU:** Runs beautifully on Vast.ai H200 France (H100), but also supports CPU or Mac (albeit slower).
 - **Reproducible and modular:** All configurations, logs, and outputs are saved.
 - **Comprehensive outputs:** Interactive HTML reports and figures are generated for every run.
 
