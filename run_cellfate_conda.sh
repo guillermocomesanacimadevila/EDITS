@@ -1,14 +1,15 @@
 #!/bin/bash
 # run_tap_conda.sh
 
-# FULL CellFate PIPELINE SCRIPT (NO ABBREVIATIONS)
 # Update: Allows classifier head choice (linear, minimal, resnet)
 # Update: Sectioned, colorized, metrics helpers, future grid search extensible.
 
 # ──────────────────────────────────────────────────────────────── #
-#                 CellFate PIPELINE: SELF-CONFIGURING             #
-#      (Conda auto-install + environment bootstrap + pipeline)     #
+#                 CellFate PIPELINE: SELF-CONFIGURING              #
+#      (Conda auto-install + env bootstrap + pipeline)             #
 # ──────────────────────────────────────────────────────────────── #
+
+
 
 # ───────────── Terminal Colors ───────────── #
 RED='\033[0;31m'
@@ -17,15 +18,53 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# ───────────── Locale (for font/Unicode issues) ───────────── #
 export LC_ALL=C.UTF-8
 export LANG=C.UTF-8
 
-# ───────────── Auto-Open HTML Report Helper ───────────── #
+# ───────────── Detect WSL ───────────── #
+IS_WSL=false
+if grep -qi microsoft /proc/version 2>/dev/null; then
+    IS_WSL=true
+fi
+
+# ───────────── Bootstrap System Requirements (WSL/Ubuntu/Mac) ───────────── #
+echo -e "${BLUE}🔧 Checking and installing system requirements...${NC}"
+
+SYSTEM_TOOLS=(python3 pip wget sudo git du)
+APT_PACKAGES=(python3 python3-pip wget sudo git du time fontconfig fonts-dejavu-core fzf)
+NEED_TO_INSTALL=()
+
+for cmd in "${SYSTEM_TOOLS[@]}"; do
+    command -v "$cmd" >/dev/null 2>&1 || NEED_TO_INSTALL+=("$cmd")
+done
+
+# Only do apt-get for Linux/WSL
+OS_TYPE="$(uname)"
+if [[ "$OS_TYPE" == "Linux" ]] && command -v apt-get &>/dev/null; then
+    echo -e "${BLUE}➡️  Ensuring essential apt packages: ${YELLOW}${APT_PACKAGES[*]}${NC}"
+    sudo apt-get update -qq
+    sudo apt-get install -y "${APT_PACKAGES[@]}"
+    # WSL: ensure wslu/wslview for browser open
+    if $IS_WSL && ! command -v wslview &>/dev/null; then
+        sudo apt-get install -y wslu
+    fi
+fi
+
+# Mac users: Homebrew block
+if [[ "$OS_TYPE" == "Darwin" ]]; then
+    echo -e "${BLUE}➡️  On Mac? Ensure Homebrew is installed: https://brew.sh"
+    for brewdep in python3 wget git fzf fontconfig; do
+        brew list "$brewdep" >/dev/null 2>&1 || brew install "$brewdep"
+    done
+fi
+
+# ───────────── HTML Report Opener (WSL+Linux+Mac) ───────────── #
 open_html_report() {
   local html_path="$1"
   if [ -f "$html_path" ]; then
-    if command -v xdg-open &> /dev/null; then
+    if $IS_WSL && command -v wslview &> /dev/null; then
+      wslview "$html_path"
+    elif command -v xdg-open &> /dev/null; then
       xdg-open "$html_path"
     elif command -v open &> /dev/null; then
       open "$html_path"
@@ -56,68 +95,14 @@ if [[ "$1" == "--grid-only" ]]; then
     exit 0
 fi
 
-# ───────────── Ctrl+C Trap with Cleanup ───────────── #
 trap 'echo -e "\n${RED}⚡️ Script interrupted by user. Exiting!${NC}"; exit 1' SIGINT
 
-# ───────────── Check Required Commands Before Proceeding ───────────── #
-REQUIRED_COMMANDS=(wget sudo python3 pip conda du)
-for cmd in "${REQUIRED_COMMANDS[@]}"; do
-  if ! command -v "$cmd" &> /dev/null; then
-    echo -e "${RED}❌ Required command '$cmd' not found. Please install it before running this script.${NC}"
-    exit 1
-  fi
-done
-
-# ───────────── Check if /usr/bin/time is available, install if possible ───────────── #
-if ! command -v /usr/bin/time &> /dev/null; then
-  echo -e "${YELLOW}⚠️ /usr/bin/time not found.${NC}"
-  OS_TYPE="$(uname)"
-  if [[ "$OS_TYPE" == "Linux" ]]; then
-    if command -v apt-get &> /dev/null; then
-      echo -e "${YELLOW}Attempting to install 'time' utility using apt-get...${NC}"
-      sudo apt-get update -qq
-      sudo apt-get install -y time
-      if command -v /usr/bin/time &> /dev/null; then
-        echo -e "${GREEN}✅ /usr/bin/time installed successfully.${NC}"
-      else
-        echo -e "${RED}❌ Failed to install /usr/bin/time.${NC}"
-      fi
-    else
-      echo -e "${RED}❌ apt-get not available; cannot install /usr/bin/time automatically.${NC}"
-    fi
-  else
-    echo -e "${YELLOW}Please install /usr/bin/time manually on your OS for better resource usage logging.${NC}"
-  fi
-fi
-
-# ───────────── Check Available Disk Space ───────────── #
-REQUIRED_SPACE_MB=500
-AVAILABLE_SPACE_KB=$(df "$HOME" | tail -1 | awk '{print $4}')
-AVAILABLE_SPACE_MB=$((AVAILABLE_SPACE_KB / 1024))
-if (( AVAILABLE_SPACE_MB < REQUIRED_SPACE_MB )); then
-  echo -e "${RED}❌ Not enough disk space: ${AVAILABLE_SPACE_MB}MB available, ${REQUIRED_SPACE_MB}MB needed.${NC}"
-  exit 1
-fi
-
-# ───────────── Check Python Version (must be 3.x) ───────────── #
-PYTHON_VERSION=$(python3 -c 'import sys; print(sys.version_info.major)')
-if [[ "$PYTHON_VERSION" != "3" ]]; then
-  echo -e "${RED}❌ Python 3 is required. Detected version: $PYTHON_VERSION${NC}"
-  exit 1
-fi
-
-# ──────────────────────────────────────────────────────────────── #
-#      CONDA/AUTOINSTALL/ENV CREATION                             #
-# ──────────────────────────────────────────────────────────────── #
+# ───────────── Conda/Miniconda Bootstrap ───────────── #
 ENV_NAME="cellfate-env"
 ENV_YML="environment.yml"
 
 if ! command -v conda &> /dev/null; then
     echo -e "${YELLOW}🔄 Conda not found. Installing Miniconda...${NC}"
-    if ! command -v wget &> /dev/null; then
-      echo -e "${RED}❌ wget not found. Cannot download Miniconda.${NC}"
-      exit 1
-    fi
     wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh
     bash miniconda.sh -b -p "$HOME/miniconda"
     export PATH="$HOME/miniconda/bin:$PATH"
@@ -150,31 +135,12 @@ echo -e "${GREEN}🔄 Activating '$ENV_NAME'...${NC}"
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate "$ENV_NAME" || { echo -e "${RED}❌ Failed to activate '$ENV_NAME'!${NC}"; exit 1; }
 
-# ───────────── Check Write Permission to Home and Runs Directory ───────────── #
-if [ ! -w "$HOME" ]; then
-  echo -e "${RED}❌ No write permission to home directory: $HOME${NC}"
-  exit 1
-fi
-
-if [ ! -d "runs" ]; then
-  mkdir -p runs || { echo -e "${RED}❌ Cannot create 'runs' directory.${NC}"; exit 1; }
-elif [ ! -w "runs" ]; then
-  echo -e "${RED}❌ No write permission to 'runs' directory.${NC}"
-  exit 1
-fi
-
 # ───────────── FONT FIX FOR MATPLOTLIB ───────────── #
-if command -v apt-get &> /dev/null; then
-    sudo apt-get update
-    sudo apt-get install -y fonts-dejavu-core fontconfig
-fi
-
 mkdir -p ~/.config/matplotlib
 echo "font.family: sans-serif
 font.sans-serif: DejaVu Sans
 " > ~/.config/matplotlib/matplotlibrc
 
-# --- Fix matplotlib cache directory permissions for all users ---
 mkdir -p ~/.cache/matplotlib
 chmod 700 ~/.cache/matplotlib
 
@@ -203,6 +169,33 @@ echo -n "Conda: "; conda --version
 echo -n "PyTorch: "; python3 -c 'import torch; print(torch.__version__)' 2>/dev/null || echo "N/A"
 echo -n "Numpy: "; python3 -c 'import numpy; print(numpy.__version__)' 2>/dev/null || echo "N/A"
 echo "----------------------------"
+
+# ───────────── Check Write Permission to Home and Runs Directory ───────────── #
+if [ ! -w "$HOME" ]; then
+  echo -e "${RED}❌ No write permission to home directory: $HOME${NC}"
+  exit 1
+fi
+
+if [ ! -d "runs" ]; then
+  mkdir -p runs || { echo -e "${RED}❌ Cannot create 'runs' directory.${NC}"; exit 1; }
+elif [ ! -w "runs" ]; then
+  echo -e "${RED}❌ No write permission to 'runs' directory.${NC}"
+  exit 1
+fi
+
+# ───────────── Check Write Permission to Home and Runs Directory ───────────── #
+if [ ! -w "$HOME" ]; then
+  echo -e "${RED}❌ No write permission to home directory: $HOME${NC}"
+  exit 1
+fi
+
+if [ ! -d "runs" ]; then
+  mkdir -p runs || { echo -e "${RED}❌ Cannot create 'runs' directory.${NC}"; exit 1; }
+elif [ ! -w "runs" ]; then
+  echo -e "${RED}❌ No write permission to 'runs' directory.${NC}"
+  exit 1
+fi
+
 
 # ───────────── fzf Auto-Installer (Linux/macOS) ───────────── #
 if ! command -v fzf &> /dev/null; then
