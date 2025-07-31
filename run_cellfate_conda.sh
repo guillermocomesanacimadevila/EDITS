@@ -1,8 +1,12 @@
 #!/bin/bash
 # run_tap_conda.sh
 
+# FULL CellFate PIPELINE SCRIPT (NO ABBREVIATIONS)
+# Update: Allows classifier head choice (linear, minimal, resnet)
+# Update: Sectioned, colorized, metrics helpers, future grid search extensible.
+
 # ──────────────────────────────────────────────────────────────── #
-#                 CELLFLOW PIPELINE: SELF-CONFIGURING             #
+#                 CellFate PIPELINE: SELF-CONFIGURING             #
 #      (Conda auto-install + environment bootstrap + pipeline)     #
 # ──────────────────────────────────────────────────────────────── #
 
@@ -37,11 +41,18 @@ open_html_report() {
 
 # ───────────── Help Option ───────────── #
 if [[ "$1" == "--help" || "$1" == "-h" ]]; then
-    echo -e "${YELLOW}CELLFLOW PIPELINE${NC}"
+    echo -e "${YELLOW}CellFate PIPELINE${NC}"
     echo -e "Usage: bash $0"
     echo "You will be interactively prompted for input files/parameters."
     echo "Outputs go to ./runs/ and to your specified output directory."
     echo -e "After run, open your HTML report in your browser.\n"
+    exit 0
+fi
+
+# ───────────── Direct Grid Search Mode ───────────── #
+if [[ "$1" == "--grid-only" ]]; then
+    echo -e "${BLUE}Running full spatial hyperparameter grid search...${NC}"
+    python3 Workflow/grid_search_spatial.py
     exit 0
 fi
 
@@ -98,7 +109,7 @@ fi
 # ──────────────────────────────────────────────────────────────── #
 #      CONDA/AUTOINSTALL/ENV CREATION                             #
 # ──────────────────────────────────────────────────────────────── #
-ENV_NAME="cellflow-env"
+ENV_NAME="cellfate-env"
 ENV_YML="environment.yml"
 
 if ! command -v conda &> /dev/null; then
@@ -306,7 +317,6 @@ run_and_log() {
     h=${h:-0}; m=${m:-0}; s=${s:-0}
     h=$(echo "$h" | sed 's/^0*//'); h=${h:-0}
     m=$(echo "$m" | sed 's/^0*//'); m=${m:-0}
-    s=$(echo "$s" | sed 's/^0*//'); s=${s:-0}
     s=${s%%.*}
     ELAPSED_SEC=$((10#$h*3600 + 10#$m*60 + 10#$s))
     PEAK_RAM_MB=$(grep "Maximum resident set size" "$LOG" | awk '{print int($6/1024)}')
@@ -328,12 +338,25 @@ center_text() {
 }
 
 # ──────────────────────────────────────────────────────────────── #
-#                           USER INPUT                            #
+#                   MAIN USER INTERACTION SECTION                 #
 # ──────────────────────────────────────────────────────────────── #
-center_text "${BLUE}🔬 CELLFLOW ML Pipeline Setup${NC}"
+
+center_text "${BLUE}🔬 CellFate ML Pipeline Setup${NC}"
 echo -e "${YELLOW}ℹ️  Select files/directories interactively below (relative paths preferred)${NC}"
 
-INPUT_TRAIN=$(select_file "📥 Select TRAINING movie (.tif)" "Data/")
+# ──────── SPATIAL GRID SEARCH OPTION (new section) ──────── #
+echo -e "${BLUE}Do you want to run the full spatial hyperparameter grid search? (y/n)${NC}"
+read -r RUN_SPATIAL_GRID
+if [[ "$RUN_SPATIAL_GRID" == "y" || "$RUN_SPATIAL_GRID" == "Y" ]]; then
+    center_text "${YELLOW}🚀 Running spatial hyperparameter grid search (this will take time)...${NC}"
+    python3 Workflow/grid_search_spatial.py
+    center_text "${GREEN}✅ Spatial grid search complete!${NC}"
+    echo -e "${YELLOW}📄 Results: spatial_search_results/spatial_grid_results.csv${NC}"
+    echo -e "${YELLOW}📊 Plots:   spatial_search_results/plots/${NC}"
+    exit 0
+fi
+
+INPUT_TRAIN=$(select_file "📥 Select PRE-TRAINING movie (.tif)" "Data/")
 
 center_text "${BLUE}🧪 Validate on just 1 movie or on a whole directory?${NC}"
 echo "   0: Single validation movie"
@@ -349,9 +372,29 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
 if [ "$VAL_BATCH" == "0" ]; then
 
-    # ──────────────────────────────────────────────────────────────── #
-    #                  SINGLE MOVIE PIPELINE (FULL)                   #
-    # ──────────────────────────────────────────────────────────────── #
+    # -------------- BALANCING METHOD PROMPT --------------
+    echo -e "${BLUE}Choose event balancing method for event classifier:${NC}"
+    echo "   1) Standard balanced (random sampling for equal pos/neg)"
+    echo "   2) Stratified split + oversampling + augmentation"
+    read -p "Select balancing method (1 or 2) [1]: " BAL_CHOICE
+    if [[ "$BAL_CHOICE" == "2" ]]; then
+      BALANCING_METHOD="stratified_oversample"
+    else
+      BALANCING_METHOD="balanced"
+    fi
+
+    # -------------- CLASSIFIER HEAD ARCHITECTURE PROMPT --------------
+    echo -e "${BLUE}Choose classifier head architecture (event classifier):${NC}"
+    echo "   1) linear"
+    echo "   2) minimal"
+    echo "   3) resnet"
+    read -p "Select classifier head (1, 2, or 3) [1]: " CLS_HEAD_CHOICE
+    case "$CLS_HEAD_CHOICE" in
+      2) CLS_HEAD_ARCH="minimal" ;;
+      3) CLS_HEAD_ARCH="resnet" ;;
+      *) CLS_HEAD_ARCH="linear" ;;
+    esac
+    # -------------- END ADDITION --------------------------
 
     INPUT_VAL=$(select_file "🧪 Select VALIDATION movie (.tif)" "Data/")
     INPUT_MASK=$(select_file "🎭 Select ANNOTATED MASK (.tif)" "Data/")
@@ -408,7 +451,7 @@ features: 32
 train_samples_per_epoch: 50000
 num_workers: 4
 projhead: minimal_batchnorm
-classhead: minimal
+classhead: $CLS_HEAD_ARCH
 input_train:
   - "$INPUT_TRAIN"
 input_val:
@@ -487,26 +530,45 @@ EOL
 
     STEP_LOG="$SELECTED_DIR/03_classification_timing.log"
     center_text "${YELLOW}🚀 Event Classification${NC}"
-    run_and_log "Event Classification" "$STEP_LOG" "$SELECTED_DIR" "$METRICS_CSV" python3 Workflow/03_event_classification.py \
-        --input_frame "$INPUT_VAL" \
-        --input_mask "$INPUT_MASK" \
-        --cam_size 960 \
-        --size "$CROP_SIZE" \
-        --batchsize 108 \
-        --training_epochs "$EPOCHS" \
-        --balanced_sample_size "$BALANCED_SAMPLE_SIZE" \
-        --crops_per_image 108 \
-        --model_seed "$SEED" \
-        --data_seed "$SEED" \
-        --data_save_dir "$SELECTED_DIR" \
-        --num_runs 1 \
-        --model_save_dir "$MODEL_RUN_DIR" \
-        --model_id "$MODEL_ID" \
-        --cls_head_arch linear \
-        --backbone "$BACKBONE" \
-        --name "$MODEL_ID" \
-        --binarize false \
-        --TAP_model_load_path "$TAP_MODEL_DIR"
+
+    # 🟩 Prompt for grid search vs regular run
+    echo -e "${BLUE}Do you want to run a hyperparameter grid search for the event classifier? (y/n)${NC}"
+    read -r GRID_SEARCH
+    if [[ "$GRID_SEARCH" == "y" || "$GRID_SEARCH" == "Y" ]]; then
+        # 🟩 Run built-in grid search mode from your Python script
+        run_and_log "Event Classification GridSearch" "$STEP_LOG" "$SELECTED_DIR" "$METRICS_CSV" \
+            python3 Workflow/03_event_classification.py grid
+        echo -e "${GREEN}Grid search complete. Results saved to grid_search_results.csv in working directory.${NC}"
+        # Optionally display best result summary
+        if [ -f grid_search_results.csv ]; then
+            echo -e "${BLUE}Top results from grid_search_results.csv:${NC}"
+            head -5 grid_search_results.csv
+        fi
+    else
+        # Standard single run as before
+        run_and_log "Event Classification" "$STEP_LOG" "$SELECTED_DIR" "$METRICS_CSV" \
+            python3 Workflow/03_event_classification.py \
+            --input_frame "$INPUT_VAL" \
+            --input_mask "$INPUT_MASK" \
+            --cam_size 960 \
+            --size "$CROP_SIZE" \
+            --batchsize 108 \
+            --training_epochs "$EPOCHS" \
+            --balanced_sample_size "$BALANCED_SAMPLE_SIZE" \
+            --crops_per_image 108 \
+            --model_seed "$SEED" \
+            --data_seed "$SEED" \
+            --data_save_dir "$SELECTED_DIR" \
+            --num_runs 1 \
+            --model_save_dir "$MODEL_RUN_DIR" \
+            --model_id "$MODEL_ID" \
+            --cls_head_arch "$CLS_HEAD_ARCH" \
+            --backbone "$BACKBONE" \
+            --name "$MODEL_ID" \
+            --binarize false \
+            --TAP_model_load_path "$TAP_MODEL_DIR" \
+            --balancing_method "$BALANCING_METHOD"
+    fi
 
     STEP_LOG="$SELECTED_DIR/04_mistake_analysis_timing.log"
     center_text "${YELLOW}🚀 Examining Mistaken Predictions${NC}"
@@ -518,14 +580,14 @@ EOL
         --test_data_load_path "$SELECTED_DIR/test_data_crops_flat.pth" \
         --combined_model_load_dir "$MODEL_RUN_DIR" \
         --model_id "$MODEL_ID" \
-        --cls_head_arch linear \
+        --cls_head_arch "$CLS_HEAD_ARCH" \
         --num_egs_to_show 10 \
         --save_data
 
     END_TIME=$(date +%s)
     RUNTIME=$((END_TIME - START_TIME))
 
-    center_text "${GREEN}🎉 CELLFLOW Pipeline Complete for Selected Run!${NC}"
+    center_text "${GREEN}🎉 CellFate Pipeline Complete for Selected Run!${NC}"
     echo -e "${GREEN}───────────────────────────────────────────────────────────────${NC}"
     echo "🔹 Model ID      : $MODEL_ID"
     echo "🔹 Model Dir     : $MODEL_RUN_DIR"
@@ -549,7 +611,7 @@ EOL
     open_html_report "$SELECTED_DIR/report.html"
 
     echo -e "${BLUE}─────────────────────────────────────────────${NC}"
-    echo -e "${GREEN}🎯 CELLFLOW FINAL RESULTS SUMMARY${NC}"
+    echo -e "${GREEN}🎯 CellFate FINAL RESULTS SUMMARY${NC}"
     echo -e "${BLUE}─────────────────────────────────────────────${NC}"
     echo -e "${YELLOW}🔸 Output directory    :${NC} $SELECTED_DIR"
     echo -e "${YELLOW}🔸 Figures directory   :${NC} $SELECTED_DIR/figures"
@@ -711,7 +773,7 @@ EOL
     python3 Workflow/05_generate_report.py --batch_outdirs "${OUTDIRS[@]}"
 
     echo -e "${BLUE}─────────────────────────────────────────────${NC}"
-    echo -e "${GREEN}🎯 CELLFLOW BATCH RESULTS SUMMARY${NC}"
+    echo -e "${GREEN}🎯 CellFate BATCH RESULTS SUMMARY${NC}"
     echo -e "${BLUE}─────────────────────────────────────────────${NC}"
     echo -e "${YELLOW}🔸 Output directories:${NC}"
     for d in "${OUTDIRS[@]}"; do
