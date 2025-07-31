@@ -70,6 +70,9 @@ CellFate/
 └── ...
 ```
 
+![Blue Illustration Process of Hospital Patient Admission Flowchart Poster-19](https://github.com/user-attachments/assets/71a2fda7-719f-4553-a92a-af6bff5344cd)
+
+
 - Masks should correspond to each movie as appropriate.
 - Input files are selected interactively when running the pipeline.
 
