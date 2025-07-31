@@ -1,6 +1,5 @@
 # 03_event_classification.py
 
-
 import matplotlib
 matplotlib.use('Agg')  # <--- Fix: Use Agg for headless environments
 import csv
@@ -20,6 +19,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Sampler, RandomSampler
 import numpy as np
+from sklearn.model_selection import ParameterGrid
+import pandas as pd
+import copy
+import time
+
+try:
+    from imblearn.over_sampling import RandomOverSampler
+except ImportError:
+    RandomOverSampler = None
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -917,6 +925,7 @@ class IoUVisualizer:
         self.plot_iou_matrix()
         self.save_iou_csv()
 
+# ====== MAIN =======
 def main():
     import time
 
@@ -925,7 +934,8 @@ def main():
         config_file_parser_class=configargparse.YAMLConfigFileParser,
         allow_abbrev=False,
     )
-    
+
+    # ---- CLI Arguments (add balancing_method & cls_head_arch!) ----
     p.add('--config', is_config_file=True, help='Path to config YAML file')
     p.add_argument("--input_frame")
     p.add_argument("--input_mask")
@@ -955,8 +965,14 @@ def main():
     p.add_argument("--cls_head_load_path", default=None)
     p.add_argument("--dataset_save_dir", default="runs", help="Directory to save datasets")
     p.add_argument("--TAP_model_load_path")
-    p.add_argument("--cls_head_arch")
+    ### ADD THESE:
+    p.add_argument("--cls_head_arch", choices=["linear", "minimal", "resnet"], default="linear",
+                   help="Classifier head architecture ('linear', 'minimal', 'resnet')")
     p.add_argument("--TAP_init")
+    p.add_argument('--balancing_method', choices=['balanced', 'stratified_oversample'],
+                   default='balanced', help="How to balance the train set")
+    p.add_argument('--n_aug_per_sample', type=int, default=0,
+                   help="Number of augmentations per sample for stratified_oversample (default 0)")
 
     args = p.parse_args()
     if not args.dataset_save_dir:
@@ -967,21 +983,67 @@ def main():
     data_load_path = os.path.join(args.data_save_dir, 'preprocessed_image_crops.pth')
     image_crops_flat_loaded = torch.load(data_load_path)
     print(f"image_crops_flat_loaded: {len(image_crops_flat_loaded)}")
-    train_data_ratio = 0.6
-    validation_data_ratio = 0.2
-    train_data_crops_flat, valid_data_crops_flat, test_data_crops_flat = data_split(
-        image_crops_flat_loaded,
-        train_data_ratio,
-        validation_data_ratio,
-        args.data_seed
-    )
+
+    # === DATA SPLIT & BALANCING ===
     min_required_crops = 2
+    train_data_crops_flat = []
+    valid_data_crops_flat = []
+    test_data_crops_flat = []
     if len(image_crops_flat_loaded) <= min_required_crops:
         print(f"⚠️  Very small dataset ({len(image_crops_flat_loaded)} crops).")
         print("   Using all crops for both training and testing. Splitting skipped.")
         train_data_crops_flat = image_crops_flat_loaded
         valid_data_crops_flat = []
         test_data_crops_flat = image_crops_flat_loaded
+    else:
+        if args.balancing_method == "balanced":
+            train_data_ratio = 0.6
+            validation_data_ratio = 0.2
+            train_data_crops_flat, valid_data_crops_flat, test_data_crops_flat = data_split(
+                image_crops_flat_loaded,
+                train_data_ratio,
+                validation_data_ratio,
+                args.data_seed
+            )
+        elif args.balancing_method == "stratified_oversample":
+            try:
+                from imblearn.over_sampling import RandomOverSampler
+            except ImportError:
+                raise ImportError("imblearn is required for stratified_oversample. Install via pip install imbalanced-learn")
+            from sklearn.model_selection import train_test_split
+            labels = np.array([x[1] for x in image_crops_flat_loaded])
+            # Split test, then valid, stratified
+            rest, test_data_crops_flat = train_test_split(
+                image_crops_flat_loaded, test_size=0.2, stratify=labels, random_state=args.data_seed)
+            rest_labels = np.array([x[1] for x in rest])
+            valid_frac = 0.2 / (1 - 0.2)
+            train_data_crops_flat, valid_data_crops_flat = train_test_split(
+                rest, test_size=valid_frac, stratify=rest_labels, random_state=args.data_seed)
+            # Oversample train set
+            train_idxs = np.arange(len(train_data_crops_flat)).reshape(-1, 1)
+            train_labels = np.array([x[1] for x in train_data_crops_flat])
+            ros = RandomOverSampler(random_state=args.data_seed)
+            idx_resampled, _ = ros.fit_resample(train_idxs, train_labels)
+            idx_resampled = idx_resampled.flatten()
+            train_data_crops_flat = [train_data_crops_flat[i] for i in idx_resampled]
+            # Augmentation (if requested)
+            n_aug = args.n_aug_per_sample
+            if n_aug > 0:
+                from copy import deepcopy
+                aug_samples = []
+                for crop in train_data_crops_flat:
+                    for _ in range(n_aug):
+                        new_crop = deepcopy(crop)
+                        if torch.is_tensor(new_crop[0]):
+                            noise = torch.randn_like(new_crop[0]) * 0.01
+                            new_crop = list(new_crop)
+                            new_crop[0] = new_crop[0] + noise
+                            aug_samples.append(tuple(new_crop))
+                train_data_crops_flat.extend(aug_samples)
+            print(f"[INFO] stratified_oversample: train/valid/test = {len(train_data_crops_flat)}/{len(valid_data_crops_flat)}/{len(test_data_crops_flat)}")
+        else:
+            raise ValueError(f"Unknown balancing_method: {args.balancing_method}")
+
     if len(train_data_crops_flat) == 0 or len(test_data_crops_flat) == 0:
         print("\n❌ Not enough data to split into train/test sets!")
         print(f"Train size: {len(train_data_crops_flat)}, Test size: {len(test_data_crops_flat)}")
@@ -999,20 +1061,39 @@ def main():
     print_and_save_stats("Test", labels_test, vis_outdir, "test")
 
     estimated_total_event_count = estimate_total_events(image_crops_flat_loaded)
-    train_loader = DataLoader(
-        train_data_crops_flat,
-        sampler=BalancedSampler(
+
+    # === DATALOADERS ===
+    if args.balancing_method == "balanced":
+        train_loader = DataLoader(
             train_data_crops_flat,
-            args.crops_per_image,
-            args.balanced_sample_size,
-            data_gen_seed=args.data_seed,
-            sequential=False
-        ),
-        batch_size=args.batchsize,
-        num_workers=0,
-        drop_last=False,
-        persistent_workers=False
-    )
+            sampler=BalancedSampler(
+                train_data_crops_flat,
+                args.crops_per_image,
+                args.balanced_sample_size,
+                data_gen_seed=args.data_seed,
+                sequential=False
+            ),
+            batch_size=args.batchsize,
+            num_workers=0,
+            drop_last=False,
+            persistent_workers=False
+        )
+        sampler = train_loader.sampler
+        indices_balanced = list(sampler.get_combined_samples(args.data_seed))
+        labels_balanced = np.array([train_data_crops_flat[i][1] for i in indices_balanced])
+        print_and_save_stats("Train AFTER balancing", labels_balanced, vis_outdir, "train_after_balancing")
+    else:
+        train_loader = DataLoader(
+            train_data_crops_flat,
+            sampler=RandomSampler(train_data_crops_flat),
+            batch_size=args.batchsize,
+            num_workers=0,
+            drop_last=False,
+            persistent_workers=False
+        )
+        labels_balanced = np.array([x[1] for x in train_data_crops_flat])
+        print_and_save_stats("Train AFTER balancing", labels_balanced, vis_outdir, "train_after_balancing")
+
     torch.manual_seed(args.data_seed)
     test_loader = DataLoader(
         test_data_crops_flat,
@@ -1023,16 +1104,11 @@ def main():
         persistent_workers=False
     )
 
-    # === PRINT & SAVE CLASS BALANCE METRICS (AFTER balancing) ===
-    sampler = train_loader.sampler
-    indices_balanced = list(sampler.get_combined_samples(args.data_seed))
-    labels_balanced = np.array([train_data_crops_flat[i][1] for i in indices_balanced])
-    print_and_save_stats("Train AFTER balancing", labels_balanced, vis_outdir, "train_after_balancing")
-
     print(f"Estimated event count: {estimated_total_event_count}")
     print(f"Train samples and positives: {count_data_points(train_loader)}")
     print(f"Test samples and positives: {count_data_points(test_loader)}")
     print(f"Loading pretrained TAP model from: {args.TAP_model_load_path}")
+
     test_loader_probing = DataLoader(
         test_data_crops_flat,
         batch_size=1,
@@ -1040,8 +1116,10 @@ def main():
         drop_last=False,
         persistent_workers=False
     )
+
     start_time = time.time()
     print(f"[DEBUG] All figures will be saved in: {vis_outdir}")
+
     (precision_class_0_all, precision_class_1_all,
      recall_class_0_all, recall_class_1_all,
      cls_head_trained, model, y_true, y_pred, y_scores) = multi_runs_training(
@@ -1053,6 +1131,7 @@ def main():
         load_saved_cls_head=args.load_saved_cls_head,
         cls_head_load_path=args.cls_head_load_path,
         output_dir=vis_outdir)
+
     print("Final Metrics (mean, std):")
     for label, values in zip(
         ["Precision Class 0", "Precision Class 1", "Recall Class 0", "Recall Class 1"],
@@ -1070,6 +1149,7 @@ def main():
     save_config_metadata(args, args.model_save_dir)
     save_datasets(train_data_crops_flat, valid_data_crops_flat,
                   test_data_crops_flat, args.data_save_dir)
+
     print("\nGenerating classification visualizations...")
     visualizer = ClassificationVisualizer(
         y_true=y_true,
@@ -1100,5 +1180,167 @@ def main():
     except Exception as e:
         print(f"Error during IoU visualization: {e}")
 
+def run_grid_search():
+    """
+    Full grid search over multiple hyperparameters for classifier head.
+    All runs/results printed and saved to CSV after each run.
+    """
+    print("\n=== STARTING GRID SEARCH ===")
+    param_grid = {
+        'cls_head_arch': ['linear', 'resnet'],
+        'learning_rate': [0.01, 0.001, 0.0001],
+        'epochs': [10, 30, 60],
+        'balancing_method': ['balanced', 'stratified_oversample'],
+        'optimizer': ['adam', 'adamw', 'sgd'],
+        'batchsize': [64, 128],
+        # Add more params as needed!
+    }
+
+    all_results = []
+    grid = list(ParameterGrid(param_grid))
+    total_runs = len(grid)
+    print(f"Total grid search runs: {total_runs}")
+
+    for i, params in enumerate(grid):
+        print("\n-------------------------------")
+        print(f"GRID SEARCH RUN {i+1}/{total_runs}")
+        print("PARAMETERS:", params)
+
+        try:
+            # --- Set up dummy argparse Namespace, update with grid params ---
+            args = get_base_args()
+            for k, v in params.items():
+                setattr(args, k, v)
+            print(f"Args for this run: {args}")
+
+            # --- You might need to pass these directly into your train routines! ---
+            # All printouts/outputs will be visible as normal
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            # Use the same data split and loader setup as your main()
+            # You may want to create functions for data_split, dataloader setup, etc, so it's reusable!
+
+            # ------ (THIS IS WHERE YOU DO THE TRAINING/EVALUATION) ------
+            # NOTE: you need to adapt this block so the correct model/dataloader setup is run
+            # If possible, refactor your main() for more reusable logic
+
+            # For example:
+            best_metrics = run_one_grid_search_training(args, device, n_folds=5)  # <-- You write this function!
+            # ------------------------------------------------------------
+
+        except Exception as e:
+            print(f"ERROR in grid search run {i+1}: {e}")
+            best_metrics = {'error': str(e)}
+
+        result = dict(params)
+        result.update(best_metrics)
+        all_results.append(result)
+
+        # Save intermediate CSV after each run
+        results_df = pd.DataFrame(all_results)
+        results_df.to_csv("grid_search_results.csv", index=False)
+        print("Run result:", result)
+        print(f"Grid search results so far saved to grid_search_results.csv")
+
+    print("\n=== GRID SEARCH FINISHED ===")
+    print(f"All results saved to grid_search_results.csv")
+
+def get_base_args():
+    """
+    Build an argparse.Namespace with all defaults, so grid params can overwrite.
+    """
+    from argparse import Namespace
+    # Fill out with your real default args as appropriate!
+    return Namespace(
+        size=96,
+        batchsize=108,
+        training_epochs=10,
+        TAP_init='loaded',
+        model_seed=42,
+        data_seed=1234,
+        crops_per_image=10,
+        model_save_dir='models',
+        model_id='gridsearch',
+        data_save_dir='runs',
+        num_runs=1,
+        load_saved_cls_head=False,
+        cls_head_load_path=None,
+        TAP_model_load_path=None,
+        dataset_save_dir="runs",
+        # ... add more default args as needed ...
+    )
+
+def run_one_grid_search_training(args, device, n_folds=5):
+    """
+    Performs K-fold cross-validation for classifier head hyperparameter search.
+    Returns the mean metrics over folds for use in grid search.
+    """
+    print(f"[GRID SEARCH] 5-fold CV: Setting up data and loaders for {n_folds} folds...")
+
+    data_load_path = os.path.join(args.data_save_dir, 'preprocessed_image_crops.pth')
+    image_crops_flat_loaded = torch.load(data_load_path)
+    all_indices = np.arange(len(image_crops_flat_loaded))
+
+    from sklearn.model_selection import KFold
+    kf = KFold(n_splits=n_folds, shuffle=True, random_state=args.data_seed)
+    fold_metrics = []
+
+    for fold_idx, (train_idx, test_idx) in enumerate(kf.split(all_indices)):
+        print(f"\n[GRID SEARCH][CV] Fold {fold_idx + 1}/{n_folds}")
+        train_data_crops_flat = [image_crops_flat_loaded[i] for i in train_idx]
+        test_data_crops_flat  = [image_crops_flat_loaded[i] for i in test_idx]
+
+        train_loader = DataLoader(
+            train_data_crops_flat,
+            batch_size=args.batchsize,
+            num_workers=0,
+            drop_last=False,
+            persistent_workers=False
+        )
+        test_loader = DataLoader(
+            test_data_crops_flat,
+            batch_size=args.batchsize,
+            num_workers=0,
+            drop_last=False,
+            persistent_workers=False
+        )
+
+        # Run training and get metrics
+        (prec0, prec1, rec0, rec1, cls_head_trained, model, y_true, y_pred, y_scores) = multi_runs_training(
+            args.num_runs, args.model_seed, train_loader,
+            test_loader, args.size, args.training_epochs,
+            device, args.TAP_model_load_path,
+            cls_head_arch=args.cls_head_arch,
+            TAP_init=args.TAP_init,
+            load_saved_cls_head=args.load_saved_cls_head,
+            cls_head_load_path=args.cls_head_load_path,
+            output_dir=None
+        )
+        from sklearn.metrics import accuracy_score, f1_score
+        metrics = {
+            "precision_class_0": float(np.mean(prec0)),
+            "precision_class_1": float(np.mean(prec1)),
+            "recall_class_0": float(np.mean(rec0)),
+            "recall_class_1": float(np.mean(rec1)),
+            "accuracy": float(accuracy_score(y_true, y_pred)),
+            "f1": float(f1_score(y_true, y_pred)),
+        }
+        print(f"[GRID SEARCH][CV] Fold {fold_idx + 1} metrics: {metrics}")
+        fold_metrics.append(metrics)
+
+    # Aggregate across folds (mean and std)
+    mean_metrics = {k: float(np.mean([fm[k] for fm in fold_metrics])) for k in fold_metrics[0]}
+    std_metrics  = {k + "_std": float(np.std([fm[k] for fm in fold_metrics])) for k in fold_metrics[0]}
+    all_metrics = {**mean_metrics, **std_metrics}
+
+    print(f"[GRID SEARCH][CV] Mean metrics over {n_folds} folds: {mean_metrics}")
+    print(f"[GRID SEARCH][CV] Std metrics over {n_folds} folds: {std_metrics}")
+
+    return all_metrics
+
 if __name__ == "__main__":
-    main()
+    import sys
+    # run as: python 03_event_classification.py grid for grid search
+    if len(sys.argv) > 1 and sys.argv[1] == "grid":
+        run_grid_search()
+    else:
+        main()
