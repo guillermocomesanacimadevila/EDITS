@@ -61,7 +61,8 @@ class SimpleResNet(nn.Module):
         self.block = BasicBlock(64, 64, stride=1)  # No downsampling, identity connection ensured
 
         # Calculate the flattened size for the FC layer
-        self.flattened_size = batch_size*time_step * 32 * height * width  # No downsampling, spatial dimensions unchanged
+        # The output after block is [batch*time, 64, height, width]
+        self.flattened_size = 64 * height * width  # Correct: 64 not 32
 
         # Fully connected layer for classification
         self.fc = nn.Linear(self.flattened_size, num_cls)
@@ -182,7 +183,6 @@ def _get_paths_recursive(paths: Sequence[str], level: int):
         input_rec = new_inps
     return input_rec
 
-# ------------------- THIS IS THE ONLY NEW FUNCTION ADDED -------------------
 def _load_image_folder(fnames, split_start, split_end):
     import tifffile
     import numpy as np
@@ -200,7 +200,6 @@ def _load_image_folder(fnames, split_start, split_end):
             img = np.array(Image.open(fname))
         imgs.append(img)
     return np.stack(imgs)
-# --------------------------------------------------------------------------
 
 def _load(path, split_start, split_end, n_images=None):
     """Loads image from disk into CPU memory.
@@ -415,7 +414,6 @@ def probing_mistaken_preds(model, test_loader, device, is_true_positive, is_true
             _, predicted = torch.max(outputs, 1)
             datapoint.append(predicted.detach().cpu())
             if (predicted == 1) and (y == 0):
-                # false positive
                 false_positives.append(datapoint)
                 logits_false_pos.append(torch.squeeze(outputs.detach().cpu()))
             elif (predicted == 0) and (y == 1):
@@ -514,7 +512,7 @@ def main():
     parser.add_argument("--model_id", type=str)
     parser.add_argument("--is_true_positive", action="store_true")
     parser.add_argument("--is_true_negative", action="store_true")
-    parser.add_argument("--cls_head_arch", type=str, help='linear or resnet')
+    parser.add_argument("--cls_head_arch", type=str, help='linear, minimal, or resnet')
     parser.add_argument("--save_data", action="store_true")
     args = parser.parse_args()
 
@@ -524,19 +522,18 @@ def main():
     TAPmodel = tarrow.models.TimeArrowNet.from_folder(model_folder=args.TAP_model_load_path)
     TAPmodel.to(device)
 
-    if args.cls_head_arch == 'linear':
+    if args.cls_head_arch in ['linear', 'minimal']:
         cls_head = ClsHead(input_shape=(1, 2, 32, args.patch_size, args.patch_size), num_cls=2).to(device)
     elif args.cls_head_arch == 'resnet':
         cls_head = SimpleResNet(input_shape=(1, 2, 32, args.patch_size, args.patch_size), num_cls=2).to(device)
     else:
-        raise ValueError("cls_head_arch must be 'linear' or 'resnet'")
+        raise ValueError("cls_head_arch must be 'linear', 'minimal', or 'resnet'")
 
     event_rec_model = CellEventClassModel(TAPmodel=TAPmodel, ClsHead=cls_head)
     model_state_path = os.path.join(args.combined_model_load_dir, f'{args.model_id}.pth')
     event_rec_model.load_state_dict(torch.load(model_state_path))
     event_rec_model.to(device)
     event_rec_model.eval()
-
     for param in event_rec_model.parameters():
         param.requires_grad = False
 
@@ -623,50 +620,88 @@ def main():
         plot_mistaken_examples(args.num_egs_to_show, len(true_negatives_egs), true_negatives_egs,
                               true_negatives_coordinates, imgs_masks_sequences, image_output_dir_true_neg)
 
-    # --- NEW: Compute and plot time distribution of mistaken predictions ---
-    # This block runs always at the end.
-    # It expects 'false_positive_coordinates' and 'false_negative_coordinates' from above.
+    #### --- NEW: Line plots for FP/TP/GT+ and FN/TN/GT- per frame as in your screenshot --- ####
+    import matplotlib.pyplot as plt
+    import numpy as np
 
-    class MistakenPredictionTimeDistribution:
-        def __init__(self, fp_coords, fn_coords):
-            self.fp_times = self.extract_times(fp_coords)
-            self.fn_times = self.extract_times(fn_coords)
+    def extract_frame_indices(coords):
+        # coords: list of tuples, where 3rd item is crop_coordinates, whose 3rd item is the frame index
+        frames = []
+        for tup in coords:
+            crop_coordinates = tup[2]
+            frame = crop_coordinates[2]
+            if isinstance(frame, torch.Tensor):
+                frame = frame.item()
+            frames.append(frame)
+        return np.array(frames, dtype=int)
 
-        @staticmethod
-        def extract_times(coords):
-            # coords: list of tuples, where third element is crop_coordinates, and the third element in there is the frame/time
-            times = []
-            for tup in coords:
-                # Each tup: (event_label, label, crop_coordinates, predicted_event_label)
-                # crop_coordinates = (torch.tensor(i), torch.tensor(j), torch.tensor(idx), ...)
-                crop_coordinates = tup[2]
-                # Accept both torch.tensor and plain int
-                time_val = crop_coordinates[2]
-                if isinstance(time_val, torch.Tensor):
-                    times.append(time_val.item())
-                else:
-                    times.append(int(time_val))
-            return np.array(times)
+    # Extract frame indices
+    fp_frames = extract_frame_indices(false_positive_coordinates)
+    fn_frames = extract_frame_indices(false_negative_coordinates)
+    tp_frames = extract_frame_indices(true_positives_coordinates) if args.is_true_positive else np.array([])
+    tn_frames = extract_frame_indices(true_negatives_coordinates) if args.is_true_negative else np.array([])
 
-        def plot(self, save_dir, show=False):
-            plt.figure(figsize=(8, 4))
-            plt.hist(self.fp_times, bins=20, alpha=0.6, label='False Positives')
-            plt.hist(self.fn_times, bins=20, alpha=0.6, label='False Negatives')
-            plt.xlabel('Frame index / Time')
-            plt.ylabel('Count')
-            plt.title('Distribution of mistaken predictions over time')
-            plt.legend()
-            plt.tight_layout()
-            out_path = os.path.join(save_dir, 'mistaken_predictions_time_distribution.png')
-            plt.savefig(out_path)
-            if show:
-                plt.show()
-            plt.close()
-            print(f"Saved time distribution histogram: {out_path}")
+    # Extract GT frames for positives and negatives
+    # Note: test_data_crops_flat is a dataset object, so we must extract label and frame info
+    all_gt_frames_pos = []
+    all_gt_frames_neg = []
+    for crop in test_data_crops_flat:
+        # crop: (inputs, event_label, label, crop_coordinates)
+        label = crop[1]
+        frame = crop[3][2]
+        if isinstance(frame, torch.Tensor):
+            frame = frame.item()
+        if label == 1:
+            all_gt_frames_pos.append(frame)
+        else:
+            all_gt_frames_neg.append(frame)
+    all_gt_frames_pos = np.array(all_gt_frames_pos, dtype=int)
+    all_gt_frames_neg = np.array(all_gt_frames_neg, dtype=int)
 
-    # Save and plot to the mistake_pred_model_id_dir directory
-    time_dist_plotter = MistakenPredictionTimeDistribution(false_positive_coordinates, false_negative_coordinates)
-    time_dist_plotter.plot(mistake_pred_model_id_dir)
+    def percent_hist(frames, total, n_frames):
+        """Return percentage of items per frame index (in %)."""
+        if total == 0:
+            return np.zeros(n_frames)
+        hist, _ = np.histogram(frames, bins=np.arange(n_frames + 1))
+        return (hist / total) * 100
+
+    n_frames = max(
+        [fp_frames.max() if len(fp_frames) else 0,
+         fn_frames.max() if len(fn_frames) else 0,
+         tp_frames.max() if len(tp_frames) else 0,
+         tn_frames.max() if len(tn_frames) else 0,
+         all_gt_frames_pos.max() if len(all_gt_frames_pos) else 0,
+         all_gt_frames_neg.max() if len(all_gt_frames_neg) else 0]) + 1
+
+    # Plot false positive time distribution
+    plt.figure(figsize=(7, 4))
+    plt.plot(percent_hist(tp_frames, len(tp_frames), n_frames), label='true positives')
+    plt.plot(percent_hist(fp_frames, len(fp_frames), n_frames), label='false positives')
+    plt.plot(percent_hist(all_gt_frames_pos, len(all_gt_frames_pos), n_frames), label='ground truth positives')
+    plt.xlabel('time index of frame')
+    plt.ylabel('Percentage (%)')
+    plt.title('Distribution of false positives by time')
+    plt.legend()
+    plt.tight_layout()
+    fp_plot_path = os.path.join(mistake_pred_model_id_dir, 'false_positives_by_time.png')
+    plt.savefig(fp_plot_path)
+    plt.close()
+    print(f"Saved plot: {fp_plot_path}")
+
+    # Plot false negative time distribution
+    plt.figure(figsize=(7, 4))
+    plt.plot(percent_hist(tn_frames, len(tn_frames), n_frames), label='true negatives')
+    plt.plot(percent_hist(fn_frames, len(fn_frames), n_frames), label='false negatives')
+    plt.plot(percent_hist(all_gt_frames_neg, len(all_gt_frames_neg), n_frames), label='ground truth negatives')
+    plt.xlabel('time index of frame')
+    plt.ylabel('Percentage (%)')
+    plt.title('Distribution of false negatives by time')
+    plt.legend()
+    plt.tight_layout()
+    fn_plot_path = os.path.join(mistake_pred_model_id_dir, 'false_negatives_by_time.png')
+    plt.savefig(fn_plot_path)
+    plt.close()
+    print(f"Saved plot: {fn_plot_path}")
 
 if __name__ == '__main__':
     main()
