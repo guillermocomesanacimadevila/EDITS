@@ -47,7 +47,7 @@ git clone https://github.com/guillermocomesanacimadevila/CellFate.git
 ```
 
 ```bash
-cd CellFate
+cd CellFate/
 ```
 
 ---
