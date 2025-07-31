@@ -12,7 +12,7 @@ git clone https://github.com/guillermocomesanacimadevila/CellFate.git
 ```
 
 ```bash
-cd ~/CellFate && bash run_tap_conda.sh
+cd ~/CellFate && bash run_cellfate_conda.sh
 ```
 
 ### Test configuration example
