@@ -71,7 +71,7 @@ CellFate/
 ```
 
 <img src="https://github.com/user-attachments/assets/71a2fda7-719f-4553-a92a-af6bff5344cd"
-     width="380"
+     width="420"
      alt="CellFate Pipeline Workflow"/>
 
 - Masks should correspond to each movie as appropriate.
