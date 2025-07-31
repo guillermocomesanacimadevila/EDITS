@@ -37,6 +37,7 @@ def make_yaml_safe(obj):
         return str(obj)
 
 def save_config_metadata(args, output_dir):
+    print("[save_config_metadata] Saving config and metadata...")
     metadata = {
         "timestamp": str(datetime.now().isoformat()),
         "python_version": str(platform.python_version()),
@@ -56,6 +57,7 @@ def save_config_metadata(args, output_dir):
     print(f"Saved config to {config_path}")
 
 def _get_paths_recursive(paths: Sequence[str], level: int):
+    print(f"[_get_paths_recursive] paths: {paths}, level: {level}")
     input_rec = paths
     for i in range(level):
         new_inps = []
@@ -68,6 +70,7 @@ def _get_paths_recursive(paths: Sequence[str], level: int):
             if Path(i).suffix == ".tif":
                 new_inps.append(Path(i))
         input_rec = new_inps
+    print(f"[_get_paths_recursive] Result: {input_rec}")
     return input_rec
 
 class CellEventDataset(Dataset):
@@ -104,6 +107,13 @@ class CellEventDataset(Dataset):
         from skimage.transform import downscale_local_mean
         from torchvision import transforms
 
+        print(f"[CellEventDataset] __init__ called")
+        print(f"  imgs: {str(imgs)[:100]}")
+        print(f"  masks: {str(masks)[:100]}")
+        print(f"  split_start: {split_start}, split_end: {split_end}")
+        print(f"  n_images: {n_images}, n_frames: {n_frames}, delta_frames: {delta_frames}")
+        print(f"  subsample: {subsample}, size: {size}, crops_per_image: {crops_per_image}")
+
         self._split_start = split_start
         self._split_end = split_end
         self._n_images = n_images
@@ -123,7 +133,7 @@ class CellEventDataset(Dataset):
         self._crops_per_image = crops_per_image
         self._min_pixels = min_pixels
 
-        # Read and process imgs
+        print(f"[CellEventDataset] Reading and processing imgs")
         if isinstance(imgs, (str, Path)):
             imgs = self._load(
                 path=imgs,
@@ -138,24 +148,30 @@ class CellEventDataset(Dataset):
                 f"Cannot form a dataset from {imgs}. "
                 "Input should be either a path to a sequence of 2d images, a single 2d+time image, or a list of 2d np.ndarrays."
             )
+        print(f"[CellEventDataset] Loaded imgs shape: {imgs.shape}")
+
         if self._channels == 0:
             imgs = np.expand_dims(imgs, 1)
         else:
             imgs = imgs[:, : self._channels, ...]
+        print(f"[CellEventDataset] imgs after channel processing shape: {imgs.shape}")
 
         assert imgs.shape[1] == 1
 
         if binarize:
             logger.debug("Binarize images")
             imgs = (imgs > 0).astype(np.float32)
+            print(f"[CellEventDataset] imgs binarized")
         else:
             logger.debug("Normalize images")
             if normalize is None:
                 imgs = self._default_normalize(imgs)
+                print(f"[CellEventDataset] imgs normalized (default)")
             else:
                 imgs = normalize(imgs)
+                print(f"[CellEventDataset] imgs normalized (custom)")
 
-        # Read and process masks
+        print(f"[CellEventDataset] Reading and processing masks")
         if isinstance(masks, (str, Path)):
             masks = self._load(
                 path=masks,
@@ -171,6 +187,8 @@ class CellEventDataset(Dataset):
                 "Input should be either a path to a sequence of 2d images, a single 2d+time image, or a list of 2d np.ndarrays."
             )
 
+        print(f"[CellEventDataset] Loaded masks shape: {masks.shape}")
+
         # --- FIX FOR RGB MASKS ---
         if masks.ndim == 4 and masks.shape[-1] == 3:
             print(f"Converting mask from RGB (shape={masks.shape}) to grayscale by taking channel 0")
@@ -179,10 +197,10 @@ class CellEventDataset(Dataset):
 
         # --- CRITICAL BINARIZATION FIX (always binarize mask!) ---
         masks = (masks > 0).astype(np.uint8)
+        print(f"[CellEventDataset] Masks binarized")
 
         imgs = torch.as_tensor(imgs)
         masks = torch.as_tensor(masks)
-
         print(f"subsample : {subsample}")
 
         if not isinstance(subsample, int) or subsample < 1:
@@ -194,22 +212,27 @@ class CellEventDataset(Dataset):
             full_size = imgs[0].shape
             imgs = downscale_local_mean(imgs, factors)
             logger.debug(f"Subsampled from {full_size} to {imgs[0].shape}")
+            print(f"[CellEventDataset] Subsampled from {full_size} to {imgs[0].shape}")
         if size is None:
             self._size = imgs[0, 0].shape
         else:
             self._size = tuple(min(a, b) for a, b in zip(size, imgs[0, 0].shape))
+        print(f"[CellEventDataset] Crop size set to {self._size}")
 
         if random_crop:
             if reject_background:
                 self._crop = self._reject_background(random_seed=42)
+                print(f"[CellEventDataset] Using reject_background cropping")
             else:
                 self._crop = transforms.RandomCrop(
                     self._size,
                     padding_mode="reflect",
                     pad_if_needed=True,
                 )
+                print(f"[CellEventDataset] Using RandomCrop")
         else:
             self._crop = transforms.CenterCrop(self._size)
+            print(f"[CellEventDataset] Using CenterCrop")
 
         if imgs.ndim != 4:
             raise NotImplementedError(
@@ -223,7 +246,7 @@ class CellEventDataset(Dataset):
                 f"incompatible shapes between images and size last {n_frames} elements"
             )
 
-        # Precompute the time slices, get image-mask pairs (I_t, I_{t+\delta t), M_t, M_{t+\delta t})
+        print(f"[CellEventDataset] Precomputing time slices for all delta_frames: {self._delta_frames}")
         self._imgs_masks_sequences = []
         for delta in self._delta_frames:
             n, k = self._n_frames, delta
@@ -233,6 +256,7 @@ class CellEventDataset(Dataset):
             )
             imgs_masks_sequences = [(torch.as_tensor(imgs[ss]), torch.as_tensor(masks[ss])) for ss in tslices]
             self._imgs_masks_sequences.extend(imgs_masks_sequences)
+        print(f"[CellEventDataset] Number of (imgs, masks) sequences: {len(self._imgs_masks_sequences)}")
 
     def _reject_background(self, random_seed, threshold=0.02, max_iterations=10):
         from torchvision import transforms
@@ -268,15 +292,18 @@ class CellEventDataset(Dataset):
         from utils import normalize as utils_normalize
         import numpy as np
 
+        print(f"[CellEventDataset] Normalizing images using _default_normalize...")
         imgs_norm = []
         for img in tqdm(imgs, desc="normalizing images", leave=False):
             imgs_norm.append(utils_normalize(img, subsample=8))
+        print(f"[CellEventDataset] Normalization complete.")
         return np.stack(imgs_norm)
 
     def _load(self, path, split_start, split_end, n_images=None):
         from pathlib import Path
         import tifffile
 
+        print(f"[CellEventDataset] Loading: {path}")
         assert split_start >= 0
         assert split_end <= 1
 
@@ -309,6 +336,7 @@ class CellEventDataset(Dataset):
                 )
             )
 
+        print(f"[CellEventDataset] Loaded image array shape: {imgs.shape}")
         return imgs
 
     def _load_image_folder(
@@ -326,6 +354,7 @@ class CellEventDataset(Dataset):
         fnames = fnames[idx_start:idx_end]
 
         logger.info(f"Load images {idx_start}-{idx_end}")
+        print(f"[CellEventDataset] Loading images from folder: {len(fnames)} files")
         imgs = []
         for f in tqdm(fnames, leave=False, desc="loading images"):
             f = Path(f)
@@ -340,15 +369,14 @@ class CellEventDataset(Dataset):
             x = np.squeeze(x)
             imgs.append(x)
         imgs = np.stack(imgs)
+        print(f"[CellEventDataset] Image folder stacked shape: {imgs.shape}")
         return imgs
 
     def __len__(self):
         return len(self._imgs_masks_sequences)
 
     def mask_to_label(self, mask_input, binary_problem=True):
-        """
-        This version is robust: any nonzero pixel means "event" if there are at least min_pixels present.
-        """
+        # No print needed for tight loop
         if binary_problem:
             if torch.any(mask_input > 0):
                 if torch.sum(mask_input).item() > self._min_pixels:
@@ -441,6 +469,7 @@ def _build_dataset(
         crops_per_image=1,
         min_pixels=10
 ):
+    print(f"[_build_dataset] Called with imgs={imgs}, masks={masks}, split={split}, size={size}")
     return CellEventDataset(
         imgs=imgs,
         masks=masks,
@@ -464,10 +493,12 @@ def _build_dataset(
     )
 
 def flatten_data(input_data, crops_per_image):
+    print(f"[flatten_data] Flattening data with {len(input_data)} items, {crops_per_image} crops per item")
     flat_data = []
     for i in range(len(input_data)):
         for j in range(crops_per_image):
             flat_data.append((input_data[i][0][j]))
+    print(f"[flatten_data] Output length: {len(flat_data)}")
     return flat_data
 
 def get_argparser():
@@ -489,6 +520,9 @@ def get_argparser():
 def main():
     parser = get_argparser()
     args = parser.parse_args()
+    print("\n[main] Arguments:")
+    for k, v in vars(args).items():
+        print(f"  {k}: {v}")
 
     if not args.input_frame:
         raise ValueError("Missing required field: input_frame (use CLI or YAML).")
@@ -502,12 +536,15 @@ def main():
     if not Path(args.input_mask).exists():
         raise FileNotFoundError(f"Input mask path not found: {args.input_mask}")
 
+    print("[main] Setting manual seed...")
     torch.manual_seed(args.data_seed)
     time_delta = [1]
 
+    print("[main] Getting input frame/mask paths (no recursion, level 0)...")
     inputs_frame = [_get_paths_recursive(args.input_frame, 0)]
     inputs_mask = [_get_paths_recursive(args.input_mask, 0)]
 
+    print("[main] Creating ConcatDataset for all inputs...")
     image_crops = ConcatDataset(
         (
             _build_dataset(
@@ -524,10 +561,13 @@ def main():
             for inp, mask in zip(inputs_frame, inputs_mask)
         )
     )
+    print(f"[main] ConcatDataset created. Total items: {len(image_crops)}")
 
     start_time = datetime.now()
+    print("[main] Flattening dataset...")
     image_crops_flat = flatten_data(image_crops, args.crops_per_image)
 
+    print(f"[main] Saving crops to {args.data_save_dir} ...")
     os.makedirs(args.data_save_dir, exist_ok=True)
     save_path = Path(args.data_save_dir) / "preprocessed_image_crops.pth"
     torch.save(image_crops_flat, save_path)
