@@ -1,3 +1,4 @@
+# model.py
 from collections import defaultdict
 import logging
 from pathlib import Path
@@ -27,6 +28,27 @@ from ..visualizations import cam_insets
 
 from pdb import set_trace
 import shutil
+
+from pathlib import Path
+import yaml
+import torch
+from torch import nn
+import dill
+from collections import defaultdict
+from torch.utils.tensorboard import SummaryWriter
+from torchvision.utils import make_grid
+import numpy as np
+from time import time as now
+from tqdm.auto import tqdm
+import json
+from .backbones import get_backbone
+from .proj_heads import ProjectionHead
+from .class_heads import ClassificationHead
+from .losses import DecorrelationLoss
+from ..utils import normalize, tile_iterator
+from ..visualizations import create_visuals
+from ..visualizations import cam_insets
+import logging
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +93,7 @@ class TimeArrowNet(nn.Module):
         commit=None,
     ):
         super().__init__()
+        self.outdir = Path(outdir) if outdir is not None else None
 
         model_kwargs = dict(
             backbone=backbone,
@@ -80,7 +103,7 @@ class TimeArrowNet(nn.Module):
             n_features=n_features,
             n_input_channels=n_input_channels,
             symmetric=symmetric,
-            outdir=str(outdir),
+            outdir=str(self.outdir) if self.outdir is not None else None,
             commit=commit,
         )
 
@@ -109,12 +132,18 @@ class TimeArrowNet(nn.Module):
         self.proj_gradients = None
         self.projection_head.register_forward_hook(self.get_activation)
 
-        model_kwargs["commit"] = _git_commit()
+        model_kwargs["commit"] = _git_commit() if "commit" not in model_kwargs else model_kwargs["commit"]
 
-        self.outdir = outdir
         if self.outdir is not None:
+            self.outdir.mkdir(parents=True, exist_ok=True)
+            for sub in (".", "tb", "visuals"):
+                (self.outdir / sub).mkdir(exist_ok=True, parents=True)
+            yaml_model_kwargs = model_kwargs.copy()
+            for k, v in yaml_model_kwargs.items():
+                if isinstance(v, Path):
+                    yaml_model_kwargs[k] = str(v)
             with open(self.outdir / "model_kwargs.yaml", "wt") as f:
-                yaml.dump(model_kwargs, f)
+                yaml.dump(yaml_model_kwargs, f)
 
     @property
     def outdir(self):
@@ -126,14 +155,12 @@ class TimeArrowNet(nn.Module):
         if path is None:
             self._outdir = None
             return
-
         path = Path(path)
         if path.exists():
             if any(path.iterdir()):
                 print(f"⚠️ [TimeArrowNet] Removing existing model folder {path}")
                 shutil.rmtree(path)
         path.mkdir(parents=True, exist_ok=True)
-
         self._outdir = path
         for sub in (".", "tb", "visuals"):
             (self._outdir / sub).mkdir(exist_ok=True, parents=True)
@@ -147,17 +174,12 @@ class TimeArrowNet(nn.Module):
     def forward(self, x, mode="classification"):
         s_in = x.shape
         x = x.flatten(end_dim=1)
-
         x = self.backbone(x)
         s_out = x.shape
-
         features = x.reshape(s_in[:2] + (self.bb_n_feat,) + s_out[2:])
-
         projections = self.projection_head(features)
-
         if projections.requires_grad:
             projections.register_hook(self.get_gradients)
-
         if mode == "classification":
             final = self.classification_head(projections)
             return final
@@ -169,12 +191,9 @@ class TimeArrowNet(nn.Module):
         else:
             raise ValueError(f"unknown mode {mode}")
 
-    def gradcam(
-        self, x, class_id=0, norm=False, all_frames=False, tile_size=(512, 512)
-    ):
+    def gradcam(self, x, class_id=0, norm=False, all_frames=False, tile_size=(512, 512)):
         if is_training := self.training:
             self.eval()
-
         assert x.ndim == 4, f"{x.ndim=}"
 
         def _get_alpha_and_activation(_x: torch.Tensor):
@@ -184,7 +203,6 @@ class TimeArrowNet(nn.Module):
             u.backward()
             A = self.proj_activations[0].detach()
             alpha = self.proj_gradients[0].detach()
-
             return alpha, A
 
         if tile_size is None or torch.all(
@@ -222,23 +240,18 @@ class TimeArrowNet(nn.Module):
         alpha = torch.sum(alpha, (-1, -2))
         cam = torch.einsum("tc,tcyx->tyx", alpha, A)
         cam = torch.abs(cam)
-
         if all_frames:
             cam = cam.sum(0)
         else:
             cam = cam[0]
-
         if norm:
             cam = (cam - cam.min()) / (cam.max() - cam.min())
-
         cam = cam.cpu().numpy()
         factor = np.array(x.shape[-2:]) / np.array(cam.shape)
         if not np.all(factor - 1 == 0):
             cam = zoom(cam, factor, order=1)
-
         if is_training:
             self.train()
-
         return cam
 
     def embedding(self, x, layer=0):
@@ -248,7 +261,6 @@ class TimeArrowNet(nn.Module):
             raise ValueError(
                 f"{n} available feature layers. Embedding for layer {layer} not available."
             )
-
         features = self.projection_head.features[layer]
         features = features.reshape(x.shape[:2] + features.shape[1:])
         return features
@@ -256,15 +268,12 @@ class TimeArrowNet(nn.Module):
     def save(self, prefix="model", which="both", exist_ok: bool = False, outdir=None):
         if outdir is None:
             outdir = self.outdir
-
         outdir.mkdir(exist_ok=True, parents=True)
-
         if which == "both" or which == "full":
             fpath = outdir / f"{prefix}_full.pt"
             if not exist_ok and fpath.exists():
                 raise FileExistsError(fpath)
             torch.save(self, fpath, pickle_module=dill)
-
         if which == "both" or which == "state":
             fpath = outdir / f"{prefix}_state.pt"
             if not exist_ok and fpath.exists():
@@ -283,6 +292,9 @@ class TimeArrowNet(nn.Module):
         model_folder = Path(model_folder)
         logging.info(f"Loading model from {model_folder}")
         kwargs = yaml.safe_load(open(model_folder / "model_kwargs.yaml", "rt"))
+        # ====== FIX: Robust to empty YAML ======
+        if kwargs is None:
+            kwargs = {}
 
         if not ignore_commit:
             _commit = _git_commit()
@@ -290,7 +302,6 @@ class TimeArrowNet(nn.Module):
                 raise RuntimeError(
                     f"Git commit of saved model ({kwargs['commit']}) does not match current commit of tarrow repo ({_commit}). Set `ignore_commit` parameter to `True` to proceed."
                 )
-
         if "commit" in kwargs:
             del kwargs["commit"]
 
@@ -310,7 +321,6 @@ class TimeArrowNet(nn.Module):
             )
             model.device = torch.device(map_location)
             model.outdir = None
-
         return model
 
     def save_example_images(self, loader, tb_writer, phase):
