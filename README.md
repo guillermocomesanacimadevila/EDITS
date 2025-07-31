@@ -1,4 +1,4 @@
-# 📸 Synergy Project – Live Cell Microscopy
+# 📸 Synergy Project – CellFate Pipeline
 
 Temporal feature learning for event classification in live-cell imaging.
 
