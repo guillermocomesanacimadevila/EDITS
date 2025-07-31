@@ -56,17 +56,19 @@ cd CellFate
 
 **After cloning the repository,** add all your `.tif` movies and corresponding mask files into the `Data/` directory:
 
+```bash
 CellFate/
 ├── Data/
-│ ├── movie1.tif
-│ ├── movie2.tif
-│ ├── mask1.tif
-│ └── ...
+│   ├── movie1.tif
+│   ├── movie2.tif
+│   ├── mask1.tif
+│   └── ...
 ├── Workflow/
-│ └── ...
+│   └── ...
 ├── run_cellfate_conda.sh
 ├── environment.yml
 └── ...
+```
 
 - Masks should correspond to each movie as appropriate.
 - Input files are selected interactively when running the pipeline.
