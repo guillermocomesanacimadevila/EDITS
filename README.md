@@ -28,7 +28,7 @@ It uses self-supervised learning (Time Arrow Prediction, TAP) to train robust fe
 | **GPU**         | NVIDIA A100/H100/RTX, 16GB+ VRAM          | Any GPU/CPU   | Required for efficient training     |
 | **System RAM**  | 32GB+                                     | 8GB           | More RAM speeds up data loading     |
 | **Disk Space**  | 30GB+                                     | 10GB          | Storage for runs and outputs        |
-| **OS**          | Linux, macOS, WSL2                        | Linux/macOS   | Windows via WSL2 or Docker          |
+| **OS**          | Linux, macOS (UNIX), WSL2                 | Linux/macOS   | Windows via WSL2 or Docker          |
 | **Python**      | 3.8 or newer                              | 3.8+          |                                     |
 | **Conda**       | Miniconda/Anaconda (auto-installed)       | Miniconda     |                                     |
 
