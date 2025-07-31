@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 """
-CELLFLOW Pipeline Report Generator & Dashboard
+CellFate Pipeline Report Generator & Dashboard
 python 05_generate_report.py --config path/to/config.yaml --outdir output_folder
 """
 
@@ -254,7 +254,7 @@ class TrainingCurvesPlotter:
 
 # === Main Script ===
 
-parser = argparse.ArgumentParser(description="CELLFLOW: Generate HTML report for a run")
+parser = argparse.ArgumentParser(description="CellFate: Generate HTML report for a run")
 parser.add_argument("--config", required=True, help="YAML config file")
 parser.add_argument("--outdir", required=True, help="Output directory for this run")
 parser.add_argument("--batch_outdirs", nargs='*', help="Batch output dirs (optional, for batch/TAP mode)")
@@ -399,8 +399,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>CELLFLOW Pipeline Report</title>
-  <meta name="description" content="Pipeline report for CELLFLOW — all statistics, figures, and results in one modern, professional dashboard.">
+  <title>CellFate Pipeline Report</title>
+  <meta name="description" content="Pipeline report for CellFate — all statistics, figures, and results in one modern, professional dashboard.">
   <link rel="icon" href="https://avatars.githubusercontent.com/u/10752544?s=200&v=4" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono&display=swap" rel="stylesheet" crossorigin="anonymous" />
   <style>
@@ -825,7 +825,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 </head>
 <body>
   <header>
-    <h1>🔬 <span style="letter-spacing:0.06em">CELLFLOW REPORT</span></h1>
+    <h1>🔬 <span style="letter-spacing:0.06em">CellFate REPORT</span></h1>
     <button class="toggle-btn" id="theme-toggle" aria-label="Toggle dark mode" title="Toggle light/dark theme">🌙 Toggle Theme</button>
   </header>
   <main>
@@ -853,7 +853,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     {sections_html}
   </main>
   <footer>
-    <strong>CELLFLOW</strong> &mdash; &copy; 2025
+    <strong>CellFate</strong> &mdash; &copy; 2025
   </footer>
   <div id="modal-zoom" role="dialog" aria-modal="true" aria-label="Zoomed image view" tabindex="-1">
     <img src="" alt="" />
@@ -863,9 +863,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     {sections_html}
   </main>
   <footer>
-    <strong>CELLFLOW</strong> &mdash; &copy; 2025
+    <strong>CellFate</strong> &mdash; &copy; 2025
   </footer>
-    <strong>CELLFLOW</strong> &mdash; &copy; 2025
+    <strong>CellFate</strong> &mdash; &copy; 2025
   </footer>
   <div id="modal-zoom" role="dialog" aria-modal="true" aria-label="Zoomed image view" tabindex="-1">
     <img src="" alt="" />
