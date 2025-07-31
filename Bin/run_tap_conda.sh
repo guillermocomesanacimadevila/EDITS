@@ -1,12 +1,13 @@
 #!/bin/bash
 # run_tap_conda.sh
-)
+
+# FULL CellFate PIPELINE SCRIPT (NO ABBREVIATIONS)
 # Update: Allows classifier head choice (linear, minimal, resnet)
 # Update: Sectioned, colorized, metrics helpers, future grid search extensible.
 
 # ──────────────────────────────────────────────────────────────── #
-#                 CellFate PIPELINE: SELF-CONFIGURING              #
-#      (Conda auto-install + env bootstrap + pipeline)             #
+#                 CellFate PIPELINE: SELF-CONFIGURING             #
+#      (Conda auto-install + environment bootstrap + pipeline)     #
 # ──────────────────────────────────────────────────────────────── #
 
 # ───────────── Terminal Colors ───────────── #
