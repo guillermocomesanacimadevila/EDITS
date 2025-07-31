@@ -1,4 +1,4 @@
-# 01_fine-tune.py
+# 01_fine_tune.py
 
 import os
 import sys
@@ -27,6 +27,19 @@ from tarrow.models import TimeArrowNet
 from tarrow.data import TarrowDataset, get_augmenter
 from tarrow.visualizations import create_visuals
 
+def convert_paths(obj):
+    """Recursively convert Path objects (and tuples) to strings for YAML dumping."""
+    if isinstance(obj, dict):
+        return {k: convert_paths(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_paths(v) for v in obj]
+    elif isinstance(obj, tuple):
+        return tuple(convert_paths(v) for v in obj)
+    elif isinstance(obj, Path):
+        return str(obj)
+    else:
+        return obj
+
 # --- Logging setup ---
 logging.basicConfig(
     format="%(filename)s: %(message)s",
@@ -48,7 +61,7 @@ def get_argparser():
     parser.add("--input_val", type=str, nargs="*", default=None)
     parser.add("--read_recursion_level", type=int, default=0)
     parser.add("--split_train", type=float, nargs=2, action="append", required=False)
-    parser.add("--split_val", type=float, nargs="+", action="append", required=False)
+    parser.add("--split_val", type=float, nargs=2, action="append", required=False)
     parser.add("-e", "--epochs", type=int, default=200)
     parser.add("--seed", type=int, default=42)
     parser.add("--backbone", type=str, default="unet")
@@ -111,7 +124,7 @@ def save_full_config(args, outdir):
     config_path = outdir / "train_args_full.yaml"
     try:
         with open(config_path, "w") as f:
-            yaml.safe_dump({**vars(args), **metadata}, f, sort_keys=False)
+            yaml.safe_dump(convert_paths({**vars(args), **metadata}), f, sort_keys=False)
         logger.info(f"Saved full config to {config_path}")
     except Exception as e:
         logger.error(f"Failed to save full config: {e}")
@@ -122,7 +135,7 @@ def save_partial_config(args, outdir):
     partial_config_path = outdir / "train_args.yaml"
     try:
         with open(partial_config_path, "w") as f:
-            yaml.safe_dump(vars(args), f, sort_keys=False)
+            yaml.safe_dump(convert_paths(vars(args)), f, sort_keys=False)
         logger.info(f"Saved training args to {partial_config_path}")
     except Exception as e:
         logger.error(f"Failed to save training args: {e}")
@@ -146,7 +159,7 @@ def _build_dataset(
     imgs, split, size, args, n_frames, delta_frames,
     augmenter=None, permute=True, random_crop=True, reject_background=False,
 ):
-    return TarrowDataset(
+    ds = TarrowDataset(
         imgs=imgs,
         split_start=split[0],
         split_end=split[1],
@@ -164,12 +177,16 @@ def _build_dataset(
         random_crop=random_crop,
         reject_background=reject_background,
     )
+    print(f"[DATASET] Created TarrowDataset with {len(ds)} samples | imgs: {imgs[:2]}... split: {split} size: {size} n_frames: {n_frames} delta: {delta_frames} permute: {permute} random_crop: {random_crop} reject_bg: {reject_background}")
+    return ds
 
 def _subset(data: Dataset, split=(0, 1.0)):
     low, high = int(len(data) * split[0]), int(len(data) * split[1])
+    print(f"[DATASET] Subset: using {high - low} / {len(data)} samples (split={split})")
     return Subset(data, range(low, high))
 
 def _create_loader(dataset, args, num_samples, num_workers, idx=None, sequential=False):
+    print(f"[LOADER] Creating loader for dataset of length {len(dataset)} | num_samples: {num_samples} batchsize: {args.batchsize} num_workers: {num_workers} sequential: {sequential}")
     sampler = (
         torch.utils.data.SequentialSampler(
             torch.utils.data.Subset(
@@ -184,7 +201,7 @@ def _create_loader(dataset, args, num_samples, num_workers, idx=None, sequential
             dataset, replacement=True, num_samples=num_samples
         )
     )
-    return torch.utils.data.DataLoader(
+    loader = torch.utils.data.DataLoader(
         dataset,
         sampler=sampler,
         batch_size=args.batchsize,
@@ -192,6 +209,8 @@ def _create_loader(dataset, args, num_samples, num_workers, idx=None, sequential
         drop_last=False,
         persistent_workers=num_workers > 0,
     )
+    print(f"[LOADER] Created loader: {len(loader.dataset)} total samples, {args.batchsize} batch size")
+    return loader
 
 def _build_outdir_path(args) -> Path:
     name = ""
@@ -210,22 +229,28 @@ def _build_outdir_path(args) -> Path:
         outdir_path = outdir / name
     else:
         logger.info(f"Run name `{name}`")
+    print(f"[OUTDIR] Output dir will be: {outdir_path}")
     return outdir_path
 
+# -------- PATCHED: robust split handling for grid search! --------
 def _convert_to_split_pairs(lst):
+    # Accept None
+    if lst is None:
+        return ((0.0, 1.0),)
+    # Already pairs
     if all(isinstance(x, (tuple, list)) and len(x) == 2 for x in lst):
-        return tuple(lst)
+        return tuple(tuple(map(float, x)) for x in lst)
+    # Flat list
+    elif isinstance(lst, (tuple, list)) and all(isinstance(x, float) for x in lst):
+        return (tuple(lst),)
     else:
-        lst = tuple(
-            elem for x in lst for elem in (x if isinstance(x, (list, tuple)) else (x,))
-        )
-        if len(lst) % 2 == 0:
-            return tuple(lst[i : i + 2] for i in range(0, len(lst), 2))
-        else:
-            raise ValueError(f"length of split {lst} should be even!")
+        raise ValueError(f"split argument could not be parsed: {lst}")
+# ---------------------------------------------------------------
 
 def _write_cams(data_visuals, model, device):
+    print(f"[VISUALS] Writing CAMs for {len(data_visuals)} visual datasets ...")
     for i, data in enumerate(data_visuals):
+        print(f"[VISUALS] Visual dataset {i}: {len(data)} samples")
         create_visuals(
             dataset=data,
             model=model,
@@ -233,6 +258,7 @@ def _write_cams(data_visuals, model, device):
             max_height=720,
             outdir=model.outdir / "visuals" / f"dataset_{i}",
         )
+    print("[VISUALS] CAMs writing complete.")
 
 def save_metrics_csv(metrics, outdir):
     if not metrics:
@@ -246,6 +272,7 @@ def save_metrics_csv(metrics, outdir):
         for row in metrics:
             writer.writerow(row)
     logger.info(f"Saved per-epoch metrics to {csv_path}")
+    print(f"[METRICS] Saved per-epoch metrics to {csv_path}")
 
 # -- Multi-run mean±std plotting (with shadow) --
 plt.rcParams.update({
@@ -261,6 +288,7 @@ plt.rcParams.update({
     "figure.dpi": 300,
     "savefig.dpi": 300,
 })
+
 
 class TrainingCurvesPlotter:
     def __init__(self, metrics_csv_list, outdir):
@@ -440,11 +468,26 @@ class TrainingCurvesPlotter:
 
 # --- Main training logic ---
 def main(args):
+    print("\n[CONFIG] --- Script configuration ---")
+    print(f"Training inputs: {args.input_train}")
+    print(f"Validation inputs: {args.input_val}")
+    print(f"Split train: {args.split_train}")
+    print(f"Split val: {args.split_val}")
+    print(f"Epochs: {args.epochs}")
+    print(f"Batch size: {args.batchsize}")
+    print(f"Train samples/epoch: {args.train_samples_per_epoch}")
+    print(f"Val samples/epoch: {args.val_samples_per_epoch}")
+    print(f"Backbone: {args.backbone}")
+    print(f"Projhead: {args.projhead}")
+    print(f"Classhead: {args.classhead}")
+    print(f"Features: {args.features}")
+    print("[CONFIG] ---------------------------\n")
+
     if args.metrics_csv_list:
         # Plot summary and exit (skip training)
         plotter = TrainingCurvesPlotter(args.metrics_csv_list, args.outdir)
         plotter.plot_all()
-        print("Summary plots generated. Exiting (no training run).")
+        print("[INFO] Summary plots generated. Exiting (no training run).")
         return
 
     if not args.input_train:
@@ -461,8 +504,11 @@ def main(args):
     if args.input_val is None:
         args.input_val = args.input_train
 
+    # ------------ PATCH: robust split parsing -------------
     args.split_train = _convert_to_split_pairs(args.split_train)
     args.split_val = _convert_to_split_pairs(args.split_val)
+    print(f"[CROSSVAL] Using splits: train={args.split_train}  val={args.split_val}")
+    # ------------------------------------------------------
 
     outdir = _build_outdir_path(args)
     outdir.mkdir(parents=True, exist_ok=True)
@@ -507,14 +553,17 @@ def main(args):
         device = torch.device("cpu")
         n_gpus = 0
     logger.info(f"Using device: {device}")
+    print(f"[DEVICE] Using device: {device}, n_gpus: {n_gpus}")
 
     augmenter = get_augmenter(args.augment)
+    print(f"[AUGMENT] Using augmenter: {augmenter}")
 
     inputs = {}
     for inp, phase in zip((args.input_train, args.input_val), ("train", "val")):
         inputs[phase] = _get_paths_recursive(inp, args.read_recursion_level)
-        logger.debug(f"{phase} datasets: {inputs[phase]}")
+        print(f"[DATA] {phase} datasets after recursion: {inputs[phase]}")
 
+    print("[INFO] Building visualisation datasets ...")
     logger.info("Build visualisation datasets.")
     data_visuals = tuple(
         _build_dataset(
@@ -529,7 +578,9 @@ def main(args):
         )
         for inp in set([*inputs["train"], *inputs["val"]])
     )
+    print(f"[INFO] Visualisation datasets ready. ({len(data_visuals)})")
 
+    print("[INFO] Building training datasets ...")
     logger.info("Build training datasets.")
     data_train = ConcatDataset(
         _build_dataset(
@@ -545,7 +596,9 @@ def main(args):
         for split in args.split_train
         for inp in inputs["train"]
     )
+    print(f"[INFO] Training dataset ready. ({len(data_train)} samples)")
 
+    print("[INFO] Building validation datasets ...")
     logger.info("Build validation datasets.")
     data_val = ConcatDataset(
         _build_dataset(
@@ -559,6 +612,7 @@ def main(args):
         for split in args.split_val
         for inp in inputs["val"]
     )
+    print(f"[INFO] Validation dataset ready. ({len(data_val)} samples)")
 
     loader_train = _create_loader(
         data_train, args=args, num_samples=args.train_samples_per_epoch, num_workers=args.num_workers
@@ -569,6 +623,8 @@ def main(args):
 
     logger.info(f"Training set: {len(data_train)} images")
     logger.info(f"Validation set: {len(data_val)} images")
+    print(f"[LOADER] Training loader: {len(loader_train.dataset)} samples, batchsize={args.batchsize}")
+    print(f"[LOADER] Validation loader: {len(loader_val.dataset)} samples, batchsize={args.batchsize}")
 
     model_kwargs = dict(
         backbone=args.backbone,
@@ -582,20 +638,24 @@ def main(args):
         outdir=outdir,
     )
 
+    print("[MODEL] Initializing model ...")
     model = TimeArrowNet(**model_kwargs)
 
     if n_gpus > 1:
         model = nn.DataParallel(model)
         logger.info("Model wrapped with DataParallel for multi-GPU training.")
+        print("[MODEL] Model wrapped in DataParallel.")
 
     model.to(device)
     logger.info(f"Number of parameters: {sum(p.numel() for p in model.parameters()) / 1.e6:.2f} Million")
+    print(f"[MODEL] Number of parameters: {sum(p.numel() for p in model.parameters()) / 1.e6:.2f} Million")
 
     save_partial_config(args, outdir)
     save_full_config(args, outdir)
 
     assert args.ndim == 2
 
+    print(f"[TRAINING] Starting training for {args.epochs} epochs ...")
     metrics = None
     try:
         metrics = model.fit(
@@ -622,7 +682,19 @@ def main(args):
         # ------------------------------------------------------------------
     except Exception as e:
         logger.error(f"Training failed with error: {e}")
+        print(f"[ERROR] Training failed with error: {e}")
         sys.exit(1)
+    print(f"[TRAINING] Training complete. {len(metrics) if metrics else 0} epochs recorded.")
+
+    # Print summary of metrics for all epochs:
+    if metrics:
+        print(f"[EPOCHS] Training metrics (first 5 epochs shown):")
+        for row in metrics[:5]:
+            print(f"Epoch {row.get('epoch', '?')}: train_loss={row.get('train_loss')}, val_loss={row.get('val_loss')}, train_acc={row.get('train_acc', row.get('accuracy'))}, val_acc={row.get('val_acc', row.get('val_accuracy'))}")
+        if len(metrics) > 5:
+            print(f"... ({len(metrics)} epochs total) ...")
+        print(f"Last epoch: {metrics[-1]}")
+        print(f"[PROGRESS] {metrics[-1]['epoch']}/{args.epochs} epochs completed ({100.0*metrics[-1]['epoch']/args.epochs:.1f}% done)")
 
     save_metrics_csv(metrics, outdir)
 
@@ -637,20 +709,26 @@ def main(args):
         torch.save(model.module.state_dict(), model_folder / "model.pth")
     else:
         torch.save(model.state_dict(), model_folder / "model.pth")
+    print(f"[MODEL] Saved model weights to {model_folder / 'model.pth'}")
 
+    # --- THIS IS THE KEY PATCH ---
     with open(model_folder / "model_kwargs.yaml", "w") as f:
-        yaml.safe_dump(model_kwargs_serializable, f)
+        yaml.safe_dump(convert_paths(model_kwargs_serializable), f)
+    print(f"[MODEL] Saved model config to {model_folder / 'model_kwargs.yaml'}")
 
     logger.info(f"Saved model and configuration to {model_folder}")
 
     try:
         csv_path = Path(outdir) / "metrics.csv"
         if csv_path.exists():
+            print(f"[PLOT] Plotting training curves from {csv_path}")
             plotter = TrainingCurvesPlotter([str(csv_path)], outdir)
             plotter.plot_all()
             plotter.plot_all_multipanel() 
+            print(f"[PLOT] Plotting complete.")
     except Exception as e:
         logger.warning(f"Failed to plot training curves: {e}")
+        print(f"[WARN] Failed to plot training curves: {e}")
 
     if args.write_final_cams:
         _write_cams(data_visuals, model, device)
@@ -660,4 +738,5 @@ if __name__ == "__main__":
     args, unknown = parser.parse_known_args()
     if unknown:
         logger.warning(f"Unknown config fields detected (ignored): {unknown}")
+        print(f"[WARN] Unknown config fields detected (ignored): {unknown}")
     main(args)
