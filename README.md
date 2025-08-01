@@ -84,7 +84,7 @@ CellFate/
 Start the **interactive pipeline**:
 
 ```bash
-chmod +x && bash run_cellfate_conda.sh
+bash run_cellfate_conda.sh
 ```
 
 ---
