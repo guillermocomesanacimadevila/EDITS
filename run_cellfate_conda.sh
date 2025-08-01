@@ -21,11 +21,7 @@ export LANG=C.UTF-8
 
 # ───────────── Center Text Helper ───────────── #
 center_text() {
-    local termwidth
-    termwidth=$(tput cols 2>/dev/null || echo 80)
-    local padding
-    padding=$(( (termwidth - ${#1}) / 2 ))
-    printf "%*s%s\n" "$padding" "" "$1"
+    echo -e "$1"
 }
 
 # ───────────── Detect WSL ───────────── #
