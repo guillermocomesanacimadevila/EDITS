@@ -9,8 +9,6 @@
 #      (Conda auto-install + env bootstrap + pipeline)             #
 # ──────────────────────────────────────────────────────────────── #
 
-
-
 # ───────────── Terminal Colors ───────────── #
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -21,10 +19,66 @@ NC='\033[0m' # No Color
 export LC_ALL=C.UTF-8
 export LANG=C.UTF-8
 
+# ───────────── Center Text Helper ───────────── #
+center_text() {
+    local termwidth
+    termwidth=$(tput cols 2>/dev/null || echo 80)
+    local padding
+    padding=$(( (termwidth - ${#1}) / 2 ))
+    printf "%*s%s\n" "$padding" "" "$1"
+}
+
 # ───────────── Detect WSL ───────────── #
 IS_WSL=false
 if grep -qi microsoft /proc/version 2>/dev/null; then
     IS_WSL=true
+fi
+
+# ───────────── ADDED FOR ROBUSTNESS: Fail-fast for required commands ───────────── #
+REQUIRED_COMMANDS=(wget sudo python3 pip conda du)
+for cmd in "${REQUIRED_COMMANDS[@]}"; do
+    if ! command -v "$cmd" &> /dev/null; then
+        echo -e "${RED}❌ Required command '$cmd' not found. Please install it before running this script.${NC}"
+        exit 1
+    fi
+done
+
+# ───────────── ADDED FOR ROBUSTNESS: /usr/bin/time check & auto-install ────────── #
+if ! command -v /usr/bin/time &> /dev/null; then
+    echo -e "${YELLOW}⚠️ /usr/bin/time not found.${NC}"
+    OS_TYPE="$(uname)"
+    if [[ "$OS_TYPE" == "Linux" ]]; then
+        if command -v apt-get &> /dev/null; then
+            echo -e "${YELLOW}Attempting to install 'time' utility using apt-get...${NC}"
+            sudo apt-get update -qq
+            sudo apt-get install -y time
+            if command -v /usr/bin/time &> /dev/null; then
+                echo -e "${GREEN}✅ /usr/bin/time installed successfully.${NC}"
+            else
+                echo -e "${RED}❌ Failed to install /usr/bin/time.${NC}"
+            fi
+        else
+            echo -e "${RED}❌ apt-get not available; cannot install /usr/bin/time automatically.${NC}"
+        fi
+    else
+        echo -e "${YELLOW}Please install /usr/bin/time manually on your OS for better resource usage logging.${NC}"
+    fi
+fi
+
+# ───────────── ADDED FOR ROBUSTNESS: Disk space check (need 500MB in $HOME) ────── #
+REQUIRED_SPACE_MB=500
+AVAILABLE_SPACE_KB=$(df "$HOME" | tail -1 | awk '{print $4}')
+AVAILABLE_SPACE_MB=$((AVAILABLE_SPACE_KB / 1024))
+if (( AVAILABLE_SPACE_MB < REQUIRED_SPACE_MB )); then
+    echo -e "${RED}❌ Not enough disk space: ${AVAILABLE_SPACE_MB}MB available, ${REQUIRED_SPACE_MB}MB needed in $HOME.${NC}"
+    exit 1
+fi
+
+# ───────────── ADDED FOR ROBUSTNESS: Python version 3 check ───────────── #
+PYTHON_VERSION=$(python3 -c 'import sys; print(sys.version_info.major)')
+if [[ "$PYTHON_VERSION" != "3" ]]; then
+    echo -e "${RED}❌ Python 3 is required. Detected version: $PYTHON_VERSION${NC}"
+    exit 1
 fi
 
 # ───────────── Bootstrap System Requirements (WSL/Ubuntu/Mac) ───────────── #
@@ -58,6 +112,49 @@ if [[ "$OS_TYPE" == "Darwin" ]]; then
     done
 fi
 
+# ──────────────────────────────────────────────────────────────── #
+#    METRICS LOGGING HELPERS (cross-platform timer, CSV writer)   #
+# ──────────────────────────────────────────────────────────────── #
+run_and_log() {
+  local STEP="$1"
+  local LOG="$2"
+  local DISK_DIR="$3"
+  local CSV_FILE="$4"
+  shift 4
+  local CMD=("$@")
+  local START END ELAPSED_SEC
+  local PEAK_RAM_MB="NA"
+  if command -v /usr/bin/time &> /dev/null; then
+    /usr/bin/time -v "${CMD[@]}" 2> "$LOG"
+    local ELAPSED=$(grep "Elapsed (wall clock) time" "$LOG" | awk '{print $8}')
+    local h=0 m=0 s=0
+    if [[ "$ELAPSED" == *:*:* ]]; then
+        IFS=: read -r h m s <<< "$ELAPSED"
+    elif [[ "$ELAPSED" == *:* ]]; then
+        IFS=: read -r m s <<< "$ELAPSED"
+        h=0
+    elif [[ -n "$ELAPSED" ]]; then
+        s="$ELAPSED"
+        h=0
+        m=0
+    fi
+    h=${h:-0}; m=${m:-0}; s=${s:-0}
+    h=$(echo "$h" | sed 's/^0*//'); h=${h:-0}
+    m=$(echo "$m" | sed 's/^0*//'); m=${m:-0}
+    s=${s%%.*}
+    ELAPSED_SEC=$((10#$h*3600 + 10#$m*60 + 10#$s))
+    PEAK_RAM_MB=$(grep "Maximum resident set size" "$LOG" | awk '{print int($6/1024)}')
+  else
+    echo -e "${YELLOW}⚠️  /usr/bin/time not found! Falling back to builtin 'time'. Resource usage will be limited.${NC}"
+    START=$(date +%s)
+    "${CMD[@]}"
+    END=$(date +%s)
+    ELAPSED_SEC=$((END - START))
+  fi
+  local DISK_MB=$(du -sm "$DISK_DIR" 2>/dev/null | awk '{print $1}')
+  echo "$STEP,$ELAPSED_SEC,$PEAK_RAM_MB,$DISK_MB" >> "$CSV_FILE"
+}
+
 # ───────────── HTML Report Opener (WSL+Linux+Mac) ───────────── #
 open_html_report() {
   local html_path="$1"
@@ -85,6 +182,8 @@ if [[ "$1" == "--help" || "$1" == "-h" ]]; then
     echo "You will be interactively prompted for input files/parameters."
     echo "Outputs go to ./runs/ and to your specified output directory."
     echo -e "After run, open your HTML report in your browser.\n"
+    echo -e "Classifier head (linear/minimal/resnet) refers ONLY to the event classifier head (on top of features from backbone)."
+    echo -e "Backbone is selected separately (unet/spectformer-xs)."
     exit 0
 fi
 
@@ -107,7 +206,7 @@ if ! command -v conda &> /dev/null; then
     bash miniconda.sh -b -p "$HOME/miniconda"
     export PATH="$HOME/miniconda/bin:$PATH"
     source "$HOME/miniconda/etc/profile.d/conda.sh"
-    if ! command -v conda &> /dev/null; then
+    if ! command -v conda &/dev/null; then
       echo -e "${RED}❌ Miniconda installation failed or PATH not updated.${NC}"
       exit 1
     fi
@@ -182,20 +281,6 @@ elif [ ! -w "runs" ]; then
   echo -e "${RED}❌ No write permission to 'runs' directory.${NC}"
   exit 1
 fi
-
-# ───────────── Check Write Permission to Home and Runs Directory ───────────── #
-if [ ! -w "$HOME" ]; then
-  echo -e "${RED}❌ No write permission to home directory: $HOME${NC}"
-  exit 1
-fi
-
-if [ ! -d "runs" ]; then
-  mkdir -p runs || { echo -e "${RED}❌ Cannot create 'runs' directory.${NC}"; exit 1; }
-elif [ ! -w "runs" ]; then
-  echo -e "${RED}❌ No write permission to 'runs' directory.${NC}"
-  exit 1
-fi
-
 
 # ───────────── fzf Auto-Installer (Linux/macOS) ───────────── #
 if ! command -v fzf &> /dev/null; then
@@ -282,55 +367,6 @@ select_dir() {
 }
 
 # ──────────────────────────────────────────────────────────────── #
-#        METRICS LOGGING HELPERS (CROSS-PLATFORM TIMER)           #
-# ──────────────────────────────────────────────────────────────── #
-run_and_log() {
-  local STEP="$1"
-  local LOG="$2"
-  local DISK_DIR="$3"
-  local CSV_FILE="$4"
-  shift 4
-  local CMD=("$@")
-  local START END ELAPSED_SEC
-  local PEAK_RAM_MB="NA"
-  if command -v /usr/bin/time &> /dev/null; then
-    /usr/bin/time -v "${CMD[@]}" 2> "$LOG"
-    local ELAPSED=$(grep "Elapsed (wall clock) time" "$LOG" | awk '{print $8}')
-    local h=0 m=0 s=0
-    if [[ "$ELAPSED" == *:*:* ]]; then
-        IFS=: read -r h m s <<< "$ELAPSED"
-    elif [[ "$ELAPSED" == *:* ]]; then
-        IFS=: read -r m s <<< "$ELAPSED"
-        h=0
-    elif [[ -n "$ELAPSED" ]]; then
-        s="$ELAPSED"
-        h=0
-        m=0
-    fi
-    h=${h:-0}; m=${m:-0}; s=${s:-0}
-    h=$(echo "$h" | sed 's/^0*//'); h=${h:-0}
-    m=$(echo "$m" | sed 's/^0*//'); m=${m:-0}
-    s=${s%%.*}
-    ELAPSED_SEC=$((10#$h*3600 + 10#$m*60 + 10#$s))
-    PEAK_RAM_MB=$(grep "Maximum resident set size" "$LOG" | awk '{print int($6/1024)}')
-  else
-    echo -e "${YELLOW}⚠️  /usr/bin/time not found! Falling back to builtin 'time'. Resource usage will be limited.${NC}"
-    START=$(date +%s)
-    "${CMD[@]}"
-    END=$(date +%s)
-    ELAPSED_SEC=$((END - START))
-  fi
-  local DISK_MB=$(du -sm "$DISK_DIR" 2>/dev/null | awk '{print $1}')
-  echo "$STEP,$ELAPSED_SEC,$PEAK_RAM_MB,$DISK_MB" >> "$CSV_FILE"
-}
-
-center_text() {
-    local width=70
-    local text="$1"
-    printf "\n%*s\n\n" $(( (${#text} + width) / 2 )) "$text"
-}
-
-# ──────────────────────────────────────────────────────────────── #
 #                   MAIN USER INTERACTION SECTION                 #
 # ──────────────────────────────────────────────────────────────── #
 
@@ -365,7 +401,7 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
 if [ "$VAL_BATCH" == "0" ]; then
 
-    # -------------- BALANCING METHOD PROMPT --------------
+    # --- Interactive config (Single Movie Mode) ---
     echo -e "${BLUE}Choose event balancing method for event classifier:${NC}"
     echo "   1) Standard balanced (random sampling for equal pos/neg)"
     echo "   2) Stratified split + oversampling + augmentation"
@@ -376,7 +412,6 @@ if [ "$VAL_BATCH" == "0" ]; then
       BALANCING_METHOD="balanced"
     fi
 
-    # -------------- CLASSIFIER HEAD ARCHITECTURE PROMPT --------------
     echo -e "${BLUE}Choose classifier head architecture (event classifier):${NC}"
     echo "   1) linear"
     echo "   2) minimal"
@@ -387,7 +422,15 @@ if [ "$VAL_BATCH" == "0" ]; then
       3) CLS_HEAD_ARCH="resnet" ;;
       *) CLS_HEAD_ARCH="linear" ;;
     esac
-    # -------------- END ADDITION --------------------------
+
+    echo -e "${YELLOW}Classifier head selected: ${CLS_HEAD_ARCH}${NC}"
+    echo "-----------------------------------------------"
+    echo "  linear : single dense layer on backbone features (simple MLP head)"
+    echo "  minimal: very small classifier head, less parameters than linear"
+    echo "  resnet : a small residual block on the classifier head (not a full ResNet)"
+    echo ""
+    echo "NOTE: Backbone is always UNet or SpectFormer (set below), this just changes the *classifier head*."
+    echo "-----------------------------------------------"
 
     INPUT_VAL=$(select_file "🧪 Select VALIDATION movie (.tif)" "Data/")
     INPUT_MASK=$(select_file "🎭 Select ANNOTATED MASK (.tif)" "Data/")
@@ -483,7 +526,6 @@ EOL
         echo -e "${YELLOW}---------------------------------------------${NC}"
     done
 
-    # Prompt user to pick which fine-tune result to use for the rest of the pipeline
     echo -e "${BLUE}\nAvailable fine-tuned runs:${NC}"
     select SELECTED_DIR in "${FT_RUNS[@]}"; do
         if [[ -n "$SELECTED_DIR" && -d "$SELECTED_DIR" ]]; then
@@ -524,21 +566,17 @@ EOL
     STEP_LOG="$SELECTED_DIR/03_classification_timing.log"
     center_text "${YELLOW}🚀 Event Classification${NC}"
 
-    # 🟩 Prompt for grid search vs regular run
     echo -e "${BLUE}Do you want to run a hyperparameter grid search for the event classifier? (y/n)${NC}"
     read -r GRID_SEARCH
     if [[ "$GRID_SEARCH" == "y" || "$GRID_SEARCH" == "Y" ]]; then
-        # 🟩 Run built-in grid search mode from your Python script
         run_and_log "Event Classification GridSearch" "$STEP_LOG" "$SELECTED_DIR" "$METRICS_CSV" \
             python3 Workflow/03_event_classification.py grid
         echo -e "${GREEN}Grid search complete. Results saved to grid_search_results.csv in working directory.${NC}"
-        # Optionally display best result summary
         if [ -f grid_search_results.csv ]; then
             echo -e "${BLUE}Top results from grid_search_results.csv:${NC}"
             head -5 grid_search_results.csv
         fi
     else
-        # Standard single run as before
         run_and_log "Event Classification" "$STEP_LOG" "$SELECTED_DIR" "$METRICS_CSV" \
             python3 Workflow/03_event_classification.py \
             --input_frame "$INPUT_VAL" \
@@ -599,7 +637,6 @@ EOL
     center_text "${YELLOW}📝 Generating HTML Report${NC}"
     python3 Workflow/05_generate_report.py --config "$CONFIG_FILE" --outdir "$SELECTED_DIR"
 
-    # ---- Auto-Open HTML report ----
     echo -e "${GREEN}Attempting to open your report in your browser...${NC}"
     open_html_report "$SELECTED_DIR/report.html"
 
