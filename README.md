@@ -1,4 +1,4 @@
-# 📸 CellFate: Automated Cell Event Recognition & Self-Supervised Temporal Representation Learning
+# 📸 EDITS: Automated Cell Event Recognition & Self-Supervised Temporal Representation Learning
 
 *Temporal feature learning and event classification for live-cell imaging*
 
