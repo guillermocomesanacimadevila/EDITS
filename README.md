@@ -91,4 +91,5 @@ bash run_cellfate_conda.sh
 
 ## 🏗️ Pipeline Workflow
 
-[ Instagram Facebook Ads - last chance (1080x1080px).pdf](https://github.com/user-attachments/files/21860385/Instagram.Facebook.Ads.-.last.chance.1080x1080px.pdf)
+![ Instagram Facebook Ads - last chance (1080x1080px)-8](https://github.com/user-attachments/assets/6ef350b6-4a65-4d63-8fa5-e81880351e20)
+
