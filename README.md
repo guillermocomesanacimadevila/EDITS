@@ -48,10 +48,6 @@ git clone https://github.com/guillermocomesanacimadevila/edits.git
 ```
 
 ```bash
-git clone https://github.com/guillermocomesanacimadevila/edits.git
-```
-
-```bash
 cd EDITS/
 ```
 
