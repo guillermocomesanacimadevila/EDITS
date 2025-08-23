@@ -120,15 +120,7 @@ Each run generates a structured **output folder** containing:
 
 If you use **EDITS** in your research, please cite our momentary preprint:
 
-```bibtex
-@article{chen2024selfsupervised,
-  title={Self-supervised Representation Learning for Cell Event Recognition through Time Arrow Prediction},
-  author={Chen, Cangxiong and Namboodiri, Vinay P. and Sero, Julia E.},
-  journal={arXiv preprint arXiv:2411.03924},
-  year={2024},
-  doi={10.48550/arXiv.2411.03924}
-}
-```
+Chen, C., Comesaña Cimadevila, G., Namboodiri, V. P., & Sero, J. E. (2024). *Self-supervised Representation Learning for Cell Event Recognition through Time Arrow Prediction*. arXiv preprint [arXiv:2411.03924](https://arxiv.org/abs/2411.03924).
 
 ---
 
