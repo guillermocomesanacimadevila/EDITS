@@ -43,11 +43,11 @@ It uses self-supervised learning (Time Arrow Prediction, TAP) to train robust fe
 **Before you add any data,** clone the repository to your machine:
 
 ```bash
-git clone https://github.com/guillermocomesanacimadevila/CellFate.git
+git clone https://github.com/guillermocomesanacimadevila/edits.git
 ```
 
 ```bash
-cd CellFate/
+cd EDITS/
 ```
 
 ---
@@ -57,7 +57,7 @@ cd CellFate/
 **After cloning the repository,** add all your `.tif` movies and corresponding mask files into the `Data/` directory:
 
 ```bash
-CellFate/
+EDITS/
 ├── Data/
 │   ├── movie1.tif
 │   ├── movie2.tif
@@ -65,14 +65,14 @@ CellFate/
 │   └── ...
 ├── Workflow/
 │   └── ...
-├── run_cellfate_conda.sh
+├── run_edits_conda.sh
 ├── environment.yml
 └── ...
 ```
 
 <img src="https://github.com/user-attachments/assets/71a2fda7-719f-4553-a92a-af6bff5344cd"
      width="420"
-     alt="CellFate Pipeline Workflow"/>
+     alt="EDITS Pipeline Workflow"/>
 
 - Masks should correspond to each movie as appropriate.
 - Input files are selected interactively when running the pipeline.
@@ -84,7 +84,7 @@ CellFate/
 Start the **interactive pipeline**:
 
 ```bash
-bash run_cellfate_conda.sh
+bash run_edits_conda.sh
 ```
 
 ---
