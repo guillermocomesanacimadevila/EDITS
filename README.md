@@ -120,7 +120,7 @@ Each run generates a structured **output folder** containing:
 
 If you use **EDITS** in your research, please cite our momentary preprint:
 
-Chen, C., Comesaña Cimadevila, G., Namboodiri, V. P., & Sero, J. E. (2024). *Self-supervised Representation Learning for Cell Event Recognition through Time Arrow Prediction*. arXiv preprint [arXiv:2411.03924](https://arxiv.org/abs/2411.03924).
+Chen, C., Namboodiri, V. P., & Sero, J. E. (2024). *Self-supervised Representation Learning for Cell Event Recognition through Time Arrow Prediction*. arXiv preprint [arXiv:2411.03924](https://arxiv.org/abs/2411.03924).
 
 ---
 
