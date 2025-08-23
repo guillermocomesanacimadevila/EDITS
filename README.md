@@ -5,19 +5,20 @@
 ---
 
 **Authors:**  
-Cangxiong Chen, Guillermo Comesaña Cimadevila, Vinay P. Namboodiri, Julia E. Sero
+Cangxiong Chen, Guillermo Comesaña Cimadevila, Vinay P. Namboodiri, Julia E. Sero  
 
 ---
 
 ## 🌟 Overview
 
-**CellFate** is a fully automated, interactive pipeline for extracting dense cellular features and classifying cell events from microscopy time-lapse images.  
-It uses self-supervised learning (Time Arrow Prediction, TAP) to train robust feature representations, followed by event classification, hyperparameter search, and publication-ready outputs.
+**EDITS** is a fully automated, interactive pipeline for extracting dense cellular features and classifying cell events from microscopy time-lapse images.  
+It leverages self-supervised learning (**Time Arrow Prediction**, TAP) to learn robust spatiotemporal feature representations, followed by event classification, hyperparameter tuning, and generation of publication-ready outputs.
 
-- **No coding required:** Everything is menu-driven and beginner-friendly.
-- **Optimised for cloud and GPU:** Runs beautifully on Vast.ai H200 France (H100), but also supports CPU or Mac (albeit slower).
-- **Reproducible and modular:** All configurations, logs, and outputs are saved.
-- **Comprehensive outputs:** Interactive HTML reports and figures are generated for every run.
+**Key features:**
+- **No coding required:** Beginner-friendly, menu-driven interface.
+- **Optimised for cloud and GPU:** Seamless performance on `vast.ai` with H100/A100 GPUs; CPU and macOS supported (but slower).
+- **Reproducible and modular:** All configurations, logs, and outputs are automatically saved.
+- **Comprehensive outputs:** Interactive HTML reports, summary figures, and reproducible logs are generated for every run.
 
 ---
 
@@ -40,7 +41,11 @@ It uses self-supervised learning (Time Arrow Prediction, TAP) to train robust fe
 
 ### 1. Clone the repository
 
-**Before you add any data,** clone the repository to your machine:
+Clone the repository to your machine:
+
+```bash
+git clone https://github.com/guillermocomesanacimadevila/edits.git
+```
 
 ```bash
 git clone https://github.com/guillermocomesanacimadevila/edits.git
@@ -91,5 +96,48 @@ bash run_edits_conda.sh
 
 ## 🏗️ Pipeline Workflow
 
+EDITS follows a **modular workflow**:
+
 ![ Instagram Facebook Ads - last chance (1080x1080px)-8](https://github.com/user-attachments/assets/6ef350b6-4a65-4d63-8fa5-e81880351e20)
 
+1. **Data ingestion:** Load and validate `.tif` time-lapse movies and corresponding masks  
+2. **Time arrow prediction (TAP):** Learn robust spatiotemporal representations  
+3. **Supervised fine-tuning:** Train classifiers for event detection  
+4. **Hyperparameter optimisation:** Automatically search spatial and temporal configurations  
+5. **Reporting:** Generate interactive HTML summaries, diagnostic plots, and logs
+
+---
+
+## 📊 Outputs
+
+Each run generates a structured **output folder** containing:
+
+- **Trained models:** Self-supervised and supervised checkpoints  
+- **Interactive HTML reports:** Explore results interactively in your browser  
+- **Loss and accuracy curves:** Training diagnostics for reproducibility  
+- **Grad-CAM visualisations:** Interpretability maps for event localisation  
+- **Event detection summaries:** Tabular outputs for downstream analysis  
+
+---
+
+## 🧠 Citation
+
+If you use **EDITS** in your research, please cite our momentary preprint:
+
+```bibtex
+@article{chen2024selfsupervised,
+  title={Self-supervised Representation Learning for Cell Event Recognition through Time Arrow Prediction},
+  author={Chen, Cangxiong and Namboodiri, Vinay P. and Sero, Julia E.},
+  journal={arXiv preprint arXiv:2411.03924},
+  year={2024},
+  doi={10.48550/arXiv.2411.03924}
+}
+```
+
+---
+
+## 📬 Contact
+
+For questions, feedback, or support, reach out to:
+
+Guillermo Comesaña Cimadevila – gcc46@bath.ac.uk
