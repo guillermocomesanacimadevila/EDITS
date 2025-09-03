@@ -10,8 +10,8 @@ Cangxiong Chen, Guillermo Comesaña Cimadevila, Vinay P. Namboodiri, Julia E. Se
 ---
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/4c1c6875-df99-415a-b714-f5d9d6bec2c1" alt="composite_final_A" width="45%" />
-  <img src="https://github.com/user-attachments/assets/03b4d94e-8475-4503-aa14-f3116e413e49" alt="T27-T42" width="45%" />
+  <img src="https://github.com/user-attachments/assets/4c1c6875-df99-415a-b714-f5d9d6bec2c1" alt="composite_final_A" width="48%" />
+  <img src="https://github.com/user-attachments/assets/03b4d94e-8475-4503-aa14-f3116e413e49" alt="T27-T42" width="48%" />
 </p>
 
 ---
