@@ -40,7 +40,7 @@ It leverages self-supervised learning (**Time Arrow Prediction**, TAP) to learn 
 | **Python**      | 3.8 or newer                              | 3.8+          |                                     |
 | **Conda**       | Miniconda/Anaconda (auto-installed)       | Miniconda     |                                     |
 
-> *Tested on vast.ai H200 France (recommended), Apple Silicon (CPU mode), and standard Linux systems.*
+> *Tested on vast.ai H200 France (recommended), and Apple Silicon (CPU mode).*
 
 ---
 
