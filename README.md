@@ -78,12 +78,15 @@ cd EDITS/
 
 ```bash
 EDITS/
-└── Data/
-    ├── movie1.tif
-    ├── movie1_mask.tif
-    ├── movie2.tif
-    ├── movie2_mask.tif
-    └── ...
+├── Bin/       # Utility scripts
+├── Scr/       # Core pipeline modules
+├── TAP/       # Time Arrow Prediction backbone
+├── env/       # Environment config
+├── GridSearch/       # Hyperparameter tuning tools
+├── Data/             # Input datasets
+├── outputs/          # Results and logs
+├── run_edits.sh      # Main launcher
+└── README.md
 ```
 
 <img src="https://github.com/user-attachments/assets/71a2fda7-719f-4553-a92a-af6bff5344cd"
@@ -109,7 +112,7 @@ chmod +x run_edits.sh && bash run_edits.sh
 
 ![ Instagram Facebook Ads - last chance (1080x1080px)-8](https://github.com/user-attachments/assets/6ef350b6-4a65-4d63-8fa5-e81880351e20)
 
-The **EDITS** pipeline follows a modular five-phase structure, ensuring transparency, reproducibility, and easy debugging throughout the full training and analysis workflow:
+The **EDITS** pipeline follows a modular five-phase structure:
 
 | 🧩 **Phase** | 🧠 **Purpose** | 📂 **Output Directory** |
 |:-------------|:---------------|:------------------------|
@@ -121,33 +124,80 @@ The **EDITS** pipeline follows a modular five-phase structure, ensuring transpar
 
 ---
 
-Each experiment automatically creates a uniquely timestamped and seed-tagged run folder:
+Each experiment automatically creates a uniquely timestamped and seed-tagged run folder: `outputs/<dataset>/<timestamp>_seed<seed>_cls-<head>/`
+
+```bash
+├── config/ → YAML configuration files (fully reproducible)
+├── logs/ → Phase-by-phase logs and timing
+├── figures/ → Confusion matrices, Grad-CAMs, plots
+├── metrics/ → CSV summaries of training performance
+├── models/ → Saved TAP and classifier weights
+└── report.html → Interactive visual summary report
+```
+
+---
+
+## 💾 Using a Pretrained TAP Model
+
+🧭 When prompted during pipeline setup:
+```bash
+Do you already have a pre-trained TAP model to use? (y/n)
+```
+
+✳️ Select:
+- `y` → reuse an existing pretrained backbone
+- `n` → train a new TAP model from scratch
+
+✅ Example of a valid model directory:
+```bash
+outputs/toy_train/20251109_215633_seed234_cls-resnet/
+└── phase1_pretraining/
+    └── model_artifacts/
+        └── toy_train_unet_20251109_215633_seed234_cls-resnet_backbone_unet/
+```
+
+Then select one of the following model files when prompted:
+```bash
+model_full.pt
+model_latest.pt
+```
+
+⚠️ Avoid selecting:
+- Files inside `models/supervised/`
+- Checkpoints from incomplete runs (`checkpoints/epoch_*.pt`)
+
+---
 
 
 ---
 
-## 📊 Outputs
+## 🆕 Version History / Changelog
 
-Each run generates a structured **output folder** containing:
-
-- **Trained models:** Self-supervised and supervised checkpoints  
-- **Interactive HTML reports:** Explore results interactively in your browser  
-- **Loss and accuracy curves:** Training diagnostics for reproducibility  
-- **Grad-CAM visualisations:** Interpretability maps for event localisation  
-- **Event detection summaries:** Tabular outputs for downstream analysis  
+| Version | Date | Changes |
+|----------|------|----------|
+| **v1.0.0** | Jul 2025 | Initial public release with full interactive pipeline |
+| **v1.1.0** | Nov 2025 | Improved output structure, added HTML reporting |
 
 ---
 
 ## 🧠 Citation
 
-If you use **EDITS** in your research, please cite our momentary preprint:
+If you use **EDITS** or the **TAP framework** in your research, please cite:
 
 Chen, C., Namboodiri, V. P., & Sero, J. E. (2024). *Self-supervised Representation Learning for Cell Event Recognition through Time Arrow Prediction*. arXiv preprint [arXiv:2411.03924](https://arxiv.org/abs/2411.03924).
 
 ---
 
-## 📬 Contact
+## 📮 Contact
 
-For questions, feedback, or support, reach out to:
+👤 **Guillermo Comesaña Cimadevila**  
+📧 ComesanaCimadevilaG@cardiff.ac.uk  
 
-Guillermo Comesaña Cimadevila – gcc46@bath.ac.uk
+🔗 [LinkedIn](https://www.linkedin.com/in/guillermocomesana) · [ResearchGate](https://www.researchgate.net/profile/Guillermo-Comesana-Cimadevila)
+
+---
+
+## 🧾 License
+
+© 2025–2026 **Guillermo Comesaña Cimadevila** and collaborators.  
+All rights reserved.  For **academic and non-commercial research use only**.
