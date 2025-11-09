@@ -51,7 +51,7 @@ It leverages self-supervised learning (**Time Arrow Prediction**, TAP) to learn 
 Clone the repository to your machine:
 
 ```bash
-git clone https://github.com/guillermocomesanacimadevila/edits.git
+git clone https://github.com/guillermocomesanacimadevila/EDITS.git
 ```
 
 ```bash
@@ -92,7 +92,7 @@ EDITS/
 Start the **interactive pipeline**:
 
 ```bash
-bash run_edits_conda.sh
+chmod +x run_edits.sh && bash run_edits.sh
 ```
 
 ---
