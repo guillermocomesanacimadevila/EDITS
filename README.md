@@ -1,11 +1,6 @@
 # 📸 EDITS: Automated Cell Event Recognition & Self-Supervised Temporal Representation Learning
 
-*Temporal feature learning and event classification for live-cell imaging*
-
----
-
-**Authors:**  
-Guillermo Comesaña Cimadevila, Cangxiong Chen , Vinay P. Namboodiri, Julia E. Sero  
+> *Temporal feature learning and event classification for live-cell microscopy*
 
 ---
 
@@ -13,6 +8,19 @@ Guillermo Comesaña Cimadevila, Cangxiong Chen , Vinay P. Namboodiri, Julia E. S
   <img src="https://github.com/user-attachments/assets/4c1c6875-df99-415a-b714-f5d9d6bec2c1" alt="composite_final_A" width="49%" />
   <img src="https://github.com/user-attachments/assets/03b4d94e-8475-4503-aa14-f3116e413e49" alt="T27-T42" width="49%" />
 </p>
+
+---
+
+**Authors:**  
+Guillermo Comesaña Cimadevila · Cangxiong Chen · Vinay P. Namboodiri · Julia E. Sero  
+
+---
+
+[![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)]()
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20WSL2-lightgrey.svg)]()
+[![Powered by PyTorch](https://img.shields.io/badge/pytorch-✅-ee4c2c.svg)]()
+[![Status](https://img.shields.io/badge/status-active-success.svg)]()
+[![Documentation](https://img.shields.io/badge/docs-auto_generated-green.svg)]()
 
 ---
 
