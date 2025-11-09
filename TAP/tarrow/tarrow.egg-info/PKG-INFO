@@ -1,0 +1,46 @@
+Metadata-Version: 2.4
+Name: tarrow
+Version: 0.2.0
+Summary: Time Arrow Pretraining
+Author: Benjamin Gallusser, Max Stieber, Martin Weigert
+Author-email: benjamin.gallusser@epfl.ch
+License: BSD 3-Clause License
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Science/Research
+Classifier: Topic :: Scientific/Engineering
+Classifier: License :: OSI Approved :: BSD License
+Classifier: Programming Language :: Python :: 3.8
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: numpy
+Requires-Dist: scipy
+Requires-Dist: tqdm
+Requires-Dist: scikit-image
+Requires-Dist: torch
+Requires-Dist: torchvision>=0.13
+Requires-Dist: pyyaml
+Requires-Dist: matplotlib
+Requires-Dist: configargparse
+Requires-Dist: pyyaml
+Requires-Dist: tensorboard
+Requires-Dist: pre-commit
+Requires-Dist: black
+Requires-Dist: imagecodecs
+Requires-Dist: tifffile
+Requires-Dist: imageio>=2.19
+Requires-Dist: pandas
+Requires-Dist: dill
+Requires-Dist: scikit-learn
+Requires-Dist: gitpython
+Requires-Dist: cython
+Requires-Dist: numba
+Dynamic: author
+Dynamic: author-email
+Dynamic: classifier
+Dynamic: description-content-type
+Dynamic: license
+Dynamic: license-file
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
