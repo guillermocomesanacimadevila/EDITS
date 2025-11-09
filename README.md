@@ -168,9 +168,6 @@ model_latest.pt
 
 ---
 
-
----
-
 ## 🆕 Version History / Changelog
 
 | Version | Date | Changes |
