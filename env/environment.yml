@@ -1,0 +1,75 @@
+name: edits-env
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # ── Core scientific stack ───────────────────────────────────────
+  - python=3.9
+  - numpy=1.26
+  - pandas=2.2
+  - matplotlib=3.8
+  - seaborn=0.13
+  - scikit-image=0.22
+  - imageio=2.34
+  - tifffile=2024.5
+  - scikit-learn=1.4
+  - pyyaml=6.0
+  - gitpython=3.1
+  - tqdm=4.66
+  - typing-extensions
+  - fontconfig
+  - openjdk=17
+  - ca-certificates
+
+  # ── Additions for reliability & speed ──────────────────────────
+  - scipy                  # Required by scikit-learn
+  - pillow                 # For saving/reading images
+  - imagecodecs            # For advanced TIFF compression/decompression
+  - psutil                 # Optional: for memory/CPU usage logging
+  - opencv=4.*             # OpenCV from conda (more stable than pip wheels)
+
+  # ── Developer & CLI utilities ─────────────────────────────────
+  - nano
+  # - less
+  - vim
+  - pytest
+  - pip
+  - setuptools
+  - wheel
+
+  # ── Python packages via pip ───────────────────────────────────
+  - pip:
+      - configargparse==1.7
+      - dill==0.3.8
+      - tensorboard==2.16.2
+      - imbalanced-learn==0.12.0
+      # Torch stack (CPU by default; see GPU note below)
+      - torch==2.2.2
+      - torchvision==0.17.2
+      - torchaudio==2.2.2
+
+      # Optional utilities (safe to keep commented)
+      # - einops==0.7.0
+
+# ────────────────────────────────────────────────────────────────
+# GPU INSTALLATION OPTIONS:
+#
+# **Option A: Pip CUDA wheels**
+# After environment creation:
+#   pip install --extra-index-url https://download.pytorch.org/whl/cu121 \
+#       torch==2.2.2 torchvision==0.17.2 torchaudio==2.2.2
+#
+# **Option B: Pure conda (preferred for stability)**
+# Add these channels:
+#   channels:
+#     - pytorch
+#     - nvidia
+#     - conda-forge
+#     - defaults
+#
+# Then replace pip-installed torch/vision/audio with:
+#   - pytorch==2.2.2
+#   - torchvision==0.17.2
+#   - torchaudio==2.2.2
+#   - pytorch-cuda=12.1
+# ────────────────────────────────────────────────────────────────
