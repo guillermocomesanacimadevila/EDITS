@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # run_edits.sh
 
-# EDITS PIPELINE: SELF-CONFIGURING, PHASED OUTPUT LAYOUT
-# - Structured outputs under: outputs/<project>/<run_id>/
+# EDITS PIPELINE: 
+# - Outputs under: outputs/<project>/<run_id>/
 # - Phases:
 #     phase1_pretraining/
 #     phase2_data_prep/
