@@ -26,8 +26,7 @@ Guillermo Comesaña Cimadevila · Cangxiong Chen · Vinay P. Namboodiri · Julia
 
 ## 🌟 Overview
 
-**EDITS** is an automated, modular, and fully interactive pipeline for extracting dense cellular features and classifying cell events from microscopy time-lapse images.  
-It combines **self-supervised temporal representation learning** (via *Time Arrow Prediction, TAP*) with **supervised event classification**, enabling reproducible workflows, without writing any code.
+**EDITS** is an automated, modular, and fully interactive pipeline for extracting dense cellular features and classifying cell events from microscopy time-lapse images. It combines **self-supervised temporal representation learning** (via *Time Arrow Prediction, TAP*) with **supervised event classification**, enabling reproducible workflows, without writing any code.
 
 ---
 
