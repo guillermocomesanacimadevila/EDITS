@@ -26,14 +26,18 @@ Guillermo Comesaña Cimadevila · Cangxiong Chen · Vinay P. Namboodiri · Julia
 
 ## 🌟 Overview
 
-**EDITS** is a fully automated, interactive pipeline for extracting dense cellular features and classifying cell events from microscopy time-lapse images.  
-It leverages self-supervised learning (**Time Arrow Prediction**, TAP) to learn robust spatiotemporal feature representations, followed by event classification, hyperparameter tuning, and generation of publication-ready outputs.
+**EDITS** is an automated, modular, and fully interactive pipeline for extracting dense cellular features and classifying cell events from microscopy time-lapse images.  
+It combines **self-supervised temporal representation learning** (via *Time Arrow Prediction, TAP*) with **supervised event classification**, enabling reproducible workflows, without writing any code.
 
-**Key features:**
-- **No coding required:** Beginner-friendly, menu-driven interface.
-- **Optimised for cloud and GPU:** Seamless performance on `vast.ai` with H100/A100 GPUs; CPU and macOS supported (but slower).
-- **Reproducible and modular:** All configurations, logs, and outputs are automatically saved.
-- **Comprehensive outputs:** Interactive HTML reports, summary figures, and reproducible logs are generated for every run.
+---
+
+### 🧩 Highlights
+
+- 🧠 **Self-supervised feature learning (TAP):** Learns temporal directionality in live-cell imaging data.  
+- 🔍 **Event classification:** Detects and classifies dynamic cellular events (e.g., divisions, fusions).  
+- 💡 **Zero-code workflow:** Fully interactive command-line interface.  
+- 📊 **Comprehensive outputs:** Metrics, reports, Grad-CAMs, and interactive HTML summaries.  
+- 🧾 **Reproducible:** Every run logs configs, seeds, model weights, and figures in a structured format.
 
 ---
 
@@ -74,24 +78,20 @@ cd EDITS/
 
 ```bash
 EDITS/
-├── Data/
-│   ├── movie1.tif
-│   ├── movie2.tif
-│   ├── mask1.tif
-│   └── ...
-├── Workflow/
-│   └── ...
-├── run_edits_conda.sh
-├── environment.yml
-└── ...
+└── Data/
+    ├── movie1.tif
+    ├── movie1_mask.tif
+    ├── movie2.tif
+    ├── movie2_mask.tif
+    └── ...
 ```
 
 <img src="https://github.com/user-attachments/assets/71a2fda7-719f-4553-a92a-af6bff5344cd"
      width="420"
      alt="EDITS Pipeline Workflow"/>
 
-- Masks should correspond to each movie as appropriate.
-- Input files are selected interactively when running the pipeline.
+- Masks should correspond spatially to each movie.
+- Example data are provided in `Data/toy_data/` for testing.
 
 ---
 
@@ -105,17 +105,24 @@ chmod +x run_edits.sh && bash run_edits.sh
 
 ---
 
-## 🏗️ Pipeline Workflow
-
-EDITS follows a **modular workflow**:
+## 🧭 Workflow Overview
 
 ![ Instagram Facebook Ads - last chance (1080x1080px)-8](https://github.com/user-attachments/assets/6ef350b6-4a65-4d63-8fa5-e81880351e20)
 
-1. **Data ingestion:** Load and validate `.tif` time-lapse movies and corresponding masks  
-2. **Time arrow prediction (TAP):** Learn robust spatiotemporal representations  
-3. **Supervised fine-tuning:** Train classifiers for event detection  
-4. **Hyperparameter optimisation:** Automatically search spatial and temporal configurations  
-5. **Reporting:** Generate interactive HTML summaries, diagnostic plots, and logs
+The **EDITS** pipeline follows a modular five-phase structure, ensuring transparency, reproducibility, and easy debugging throughout the full training and analysis workflow:
+
+| 🧩 **Phase** | 🧠 **Purpose** | 📂 **Output Directory** |
+|:-------------|:---------------|:------------------------|
+| **① TAP Pretraining** | Learns temporal directionality using self-supervised *Time Arrow Prediction* | `phase1_pretraining/` |
+| **② Data Preparation** | Extracts balanced, labeled crops for training and validation | `phase2_data_prep/` |
+| **③ Event Classification** | Trains supervised classifiers for event recognition | `phase3_classification/` |
+| **④ Error Analysis** | Identifies and analyses false positives / negatives | `phase4_mistake_analysis/` |
+| **⑤ Visualisation & Reports** | Generates Grad-CAMs, figures, and interactive HTML summaries | `phase5_grad_cam/` |
+
+---
+
+Each experiment automatically creates a uniquely timestamped and seed-tagged run folder:
+
 
 ---
 
